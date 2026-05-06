@@ -1,0 +1,126 @@
+:root {
+  font-family: "Segoe UI", Tahoma, Geneva, Verdana, sans-serif;
+  color: #0f172a;
+  background: #f7fafc;
+}
+
+body {
+  margin: 0;
+}
+
+.layout {
+  min-height: 100vh;
+}
+
+.header {
+  background: #0f172a;
+  color: #f8fafc;
+  padding: 16px 20px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.nav {
+  display: flex;
+  gap: 14px;
+}
+
+.nav a {
+  color: #bae6fd;
+  text-decoration: none;
+}
+
+.main {
+  padding: 20px;
+}
+
+.cards {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(120px, 1fr));
+  gap: 12px;
+  margin-bottom: 20px;
+}
+
+.card {
+  background: white;
+  border: 1px solid #cbd5e1;
+  border-radius: 8px;
+  padding: 12px;
+  font-weight: 600;
+}
+
+table {
+  width: 100%;
+  border-collapse: collapse;
+  background: white;
+  margin-bottom: 16px;
+}
+
+th,
+td {
+  border: 1px solid #cbd5e1;
+  padding: 8px;
+  text-align: left;
+  font-size: 14px;
+}
+
+.actions {
+  display: flex;
+  gap: 8px;
+  margin: 10px 0 16px;
+}
+
+button {
+  border: 1px solid #0f172a;
+  background: #0f172a;
+  color: white;
+  border-radius: 6px;
+  padding: 8px 10px;
+  cursor: pointer;
+}
+
+textarea {
+  width: 100%;
+  font-family: inherit;
+}
+
+label {
+  display: block;
+  margin-top: 10px;
+  margin-bottom: 4px;
+  font-weight: 600;
+}
+
+select {
+  width: 100%;
+  max-width: 320px;
+  padding: 8px;
+}
+
+.knowledge-list {
+  display: grid;
+  gap: 12px;
+}
+
+.knowledge-item {
+  background: white;
+  border: 1px solid #cbd5e1;
+  border-radius: 8px;
+  padding: 12px;
+}
+
+.meta {
+  color: #334155;
+  font-size: 13px;
+}
+
+.error {
+  color: #b91c1c;
+}
+
+@media (max-width: 900px) {
+  .cards {
+    grid-template-columns: repeat(2, minmax(120px, 1fr));
+  }
+}
