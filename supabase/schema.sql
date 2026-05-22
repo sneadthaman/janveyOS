@@ -128,9 +128,12 @@ create table if not exists uploaded_documents (
   stored_file_path text not null,
   mime_type text not null,
   file_extension text not null,
+  source_type text not null default 'file' check (source_type in ('file', 'url')),
+  source_url text,
+  notes text,
   vendor text not null,
   document_type text not null default 'price_sheet',
-  parse_status text not null default 'pending' check (parse_status in ('pending', 'parsed', 'parsed_with_errors', 'not_supported', 'failed')),
+  parse_status text not null default 'pending' check (parse_status in ('pending', 'parsed', 'parsed_with_errors', 'not_supported', 'needs_manual_review', 'failed')),
   approval_status text not null default 'pending' check (approval_status in ('pending', 'approved', 'rejected')),
   parse_error text,
   total_rows int not null default 0,
@@ -191,3 +194,122 @@ create table if not exists knowledge_entries (
   updated_at timestamptz not null default now()
 );
 create unique index if not exists knowledge_entries_title_source_unique on knowledge_entries (title, source_type);
+
+create table if not exists knowledge_cards (
+  id uuid primary key default gen_random_uuid(),
+  uploaded_document_id uuid not null references uploaded_documents (id) on delete cascade,
+  linked_product_id uuid references products (id) on delete set null,
+  card_type text not null check (
+    card_type in (
+      'product_insight',
+      'application_fit',
+      'selling_point',
+      'objection',
+      'competitive_note',
+      'maintenance_service_note',
+      'spec_fact',
+      'discovery_question'
+    )
+  ),
+  title text not null,
+  body text not null,
+  vendor text,
+  category text,
+  segment text,
+  confidence_score numeric(4,3),
+  source_type text not null check (source_type in ('upload', 'url')),
+  source_url text,
+  source_excerpt text,
+  match_reason text,
+  approved_status text not null default 'pending' check (approved_status in ('pending', 'approved', 'rejected')),
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+create index if not exists knowledge_cards_upload_idx on knowledge_cards (uploaded_document_id);
+create index if not exists knowledge_cards_status_idx on knowledge_cards (approved_status);
+
+create table if not exists crawl_jobs (
+  id uuid primary key default gen_random_uuid(),
+  vendor text not null,
+  start_url text not null,
+  allowed_domains jsonb not null default '[]'::jsonb,
+  include_patterns jsonb not null default '[]'::jsonb,
+  exclude_patterns jsonb not null default '[]'::jsonb,
+  max_pages int not null default 50,
+  max_depth int not null default 2,
+  status text not null default 'pending' check (status in ('pending', 'running', 'completed', 'failed', 'cancelled')),
+  pages_found int not null default 0,
+  pages_ingested int not null default 0,
+  errors jsonb not null default '[]'::jsonb,
+  created_at timestamptz not null default now(),
+  completed_at timestamptz
+);
+
+create table if not exists crawled_pages (
+  id uuid primary key default gen_random_uuid(),
+  crawl_job_id uuid not null references crawl_jobs (id) on delete cascade,
+  url text not null,
+  page_title text,
+  content_hash text,
+  parse_status text not null default 'pending' check (parse_status in ('pending', 'parsed', 'skipped', 'failed')),
+  created_at timestamptz not null default now()
+);
+create unique index if not exists crawled_pages_job_url_unique on crawled_pages (crawl_job_id, url);
+
+create table if not exists agent_tool_calls (
+  id uuid primary key default gen_random_uuid(),
+  requested_by text,
+  source text,
+  tool_name text not null,
+  input_json jsonb not null default '{}'::jsonb,
+  output_json jsonb,
+  status text not null default 'completed' check (status in ('completed', 'failed')),
+  error_message text,
+  latency_ms integer,
+  created_at timestamptz not null default now()
+);
+
+create table if not exists agent_action_requests (
+  id uuid primary key default gen_random_uuid(),
+  requested_by text,
+  source text,
+  action_type text not null,
+  requires_approval boolean not null default true,
+  approval_status_target text not null default 'Pending Approval',
+  input_json jsonb not null default '{}'::jsonb,
+  preview_json jsonb,
+  output_json jsonb,
+  status text not null default 'pending' check (status in ('pending', 'approved', 'rejected', 'executed', 'failed')),
+  approved_by text,
+  approved_at timestamptz,
+  executed_at timestamptz,
+  claimed_by text,
+  claimed_at timestamptz,
+  retry_count integer not null default 0,
+  last_attempted_at timestamptz,
+  error_message text,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
+alter table agent_action_requests add column if not exists requires_approval boolean not null default true;
+alter table agent_action_requests add column if not exists approval_status_target text not null default 'Pending Approval';
+alter table agent_action_requests add column if not exists output_json jsonb;
+alter table agent_action_requests add column if not exists claimed_by text;
+alter table agent_action_requests add column if not exists claimed_at timestamptz;
+alter table agent_action_requests add column if not exists retry_count integer not null default 0;
+alter table agent_action_requests add column if not exists last_attempted_at timestamptz;
+
+create table if not exists agent_action_execution_logs (
+  id uuid primary key default gen_random_uuid(),
+  action_request_id uuid not null references agent_action_requests (id) on delete cascade,
+  attempt_number integer not null,
+  worker_id text not null,
+  status text not null check (status in ('started', 'completed', 'failed')),
+  handler_name text not null,
+  input_json jsonb not null default '{}'::jsonb,
+  output_json jsonb,
+  error_message text,
+  latency_ms integer,
+  created_at timestamptz not null default now()
+);

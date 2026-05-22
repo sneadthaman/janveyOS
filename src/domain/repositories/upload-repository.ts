@@ -8,6 +8,9 @@ export async function createUploadedDocument(input: {
   storedFilePath: string;
   mimeType: string;
   fileExtension: string;
+  sourceType?: "file" | "url";
+  sourceUrl?: string;
+  notes?: string;
   vendor: "Nilfisk" | "Taski" | "Triple-S";
   documentType: string;
 }) {
@@ -21,6 +24,9 @@ export async function createUploadedDocument(input: {
       stored_file_path: input.storedFilePath,
       mime_type: input.mimeType,
       file_extension: input.fileExtension,
+      source_type: input.sourceType ?? "file",
+      source_url: input.sourceUrl ?? null,
+      notes: input.notes ?? null,
       vendor: input.vendor,
       document_type: input.documentType
     })
@@ -34,7 +40,7 @@ export async function createUploadedDocument(input: {
 
 export async function updateUploadParseSummary(input: {
   uploadedDocumentId: string;
-  parseStatus: "parsed" | "parsed_with_errors" | "not_supported" | "failed";
+  parseStatus: "parsed" | "parsed_with_errors" | "not_supported" | "needs_manual_review" | "failed";
   parseError?: string;
   totalRows: number;
   parsedRows: number;
@@ -67,16 +73,45 @@ export async function listUploads() {
   const uploads = docs ?? [];
   const enriched = await Promise.all(
     uploads.map(async (upload) => {
+      const uploadId = String(upload.id);
       const { data: rows } = await client
         .from("parsed_product_rows")
-        .select("approved_status,skip_reason")
-        .eq("uploaded_document_id", upload.id);
+        .select("approved_status,skip_reason,sku")
+        .eq("uploaded_document_id", uploadId);
+      const { data: pricingRows } = await client
+        .from("product_pricing")
+        .select("approved_status")
+        .eq("source_uploaded_document_id", uploadId);
+      const { data: knowledgeRows } = await client
+        .from("knowledge_entries")
+        .select("approved_status")
+        .contains("metadata_json", { uploaded_document_id: uploadId });
+      const { data: cardRows } = await client
+        .from("knowledge_cards")
+        .select("approved_status")
+        .eq("uploaded_document_id", uploadId);
+      const rowSkus = (rows ?? []).map((r) => String((r as Record<string, unknown>).sku ?? "")).filter(Boolean);
+      const { data: productRows } = rowSkus.length
+        ? await client.from("products").select("approved_status").in("sku", rowSkus)
+        : { data: [] as Array<{ approved_status: string }> };
+
       const parsed = (rows ?? []).filter((r) => !r.skip_reason);
-      const pendingCount = parsed.filter((r) => r.approved_status === "pending").length;
-      const approvedCount = parsed.filter((r) => r.approved_status === "approved").length;
+      const parsedPending = parsed.filter((r) => r.approved_status === "pending").length;
+      const parsedApproved = parsed.filter((r) => r.approved_status === "approved").length;
       const rejectedCount = parsed.filter((r) => r.approved_status === "rejected").length;
+      const pricingPending = (pricingRows ?? []).filter((r) => r.approved_status === "pending").length;
+      const pricingApproved = (pricingRows ?? []).filter((r) => r.approved_status === "approved").length;
+      const knowledgePending = (knowledgeRows ?? []).filter((r) => r.approved_status === "pending").length;
+      const knowledgeApproved = (knowledgeRows ?? []).filter((r) => r.approved_status === "approved").length;
+      const cardsPending = (cardRows ?? []).filter((r) => r.approved_status === "pending").length;
+      const cardsApproved = (cardRows ?? []).filter((r) => r.approved_status === "approved").length;
+      const productsPending = (productRows ?? []).filter((r) => r.approved_status === "pending").length;
+      const productsApproved = (productRows ?? []).filter((r) => r.approved_status === "approved").length;
+
+      const pendingCount = parsedPending + pricingPending + knowledgePending + cardsPending + productsPending;
+      const approvedCount = parsedApproved + pricingApproved + knowledgeApproved + cardsApproved + productsApproved;
       const derivedStatus =
-        parsed.length > 0 && approvedCount === parsed.length
+        parsed.length > 0 && parsedApproved === parsed.length
           ? "approved"
           : parsed.length > 0 && rejectedCount === parsed.length
             ? "rejected"
@@ -85,7 +120,17 @@ export async function listUploads() {
         ...upload,
         approval_status: (upload as Record<string, unknown>).approval_status ?? derivedStatus,
         pending_approval_count: pendingCount,
-        approved_count: approvedCount
+        approved_count: approvedCount,
+        parsed_pending_count: parsedPending,
+        parsed_approved_count: parsedApproved,
+        products_pending_count: productsPending,
+        products_approved_count: productsApproved,
+        pricing_pending_count: pricingPending,
+        pricing_approved_count: pricingApproved,
+        knowledge_pending_count: knowledgePending + cardsPending,
+        knowledge_approved_count: knowledgeApproved + cardsApproved,
+        knowledge_cards_pending_count: cardsPending,
+        knowledge_cards_approved_count: cardsApproved
       };
     })
   );
@@ -106,7 +151,14 @@ export async function insertParsedRows(input: {
     return {
       uploaded_document_id: input.uploadedDocumentId,
       row_number: row.rowNumber,
-      raw_json: row.raw,
+      raw_json: {
+        ...row.raw,
+        _meta: {
+          sheet_name: row.sheetName ?? null,
+          raw_row_number: row.rawRowNumber ?? null,
+          category: row.category ?? null
+        }
+      },
       sku: row.sku,
       product_name: row.productName,
       product_description: row.productDescription ?? null,
@@ -221,7 +273,14 @@ export async function insertSkippedRows(input: {
   const payload = input.skipped.map((row) => ({
     uploaded_document_id: input.uploadedDocumentId,
     row_number: row.rowNumber,
-    raw_json: row.raw,
+    raw_json: {
+      ...row.raw,
+      _meta: {
+        sheet_name: row.sheetName ?? null,
+        raw_row_number: row.rawRowNumber ?? null,
+        category: row.category ?? null
+      }
+    },
     approved_status: "pending",
     skip_reason: row.reason
   }));
@@ -250,6 +309,18 @@ export async function getUploadParsedPreview(uploadedDocumentId: string) {
 export async function getUploadDetail(uploadedDocumentId: string) {
   const preview = await getUploadParsedPreview(uploadedDocumentId);
   return preview;
+}
+
+export async function getUploadKnowledgeChunks(uploadedDocumentId: string) {
+  if (!supabaseAdminClient) throw new Error("Supabase is required.");
+  const { data, error } = await supabaseAdminClient
+    .from("knowledge_entries")
+    .select("*")
+    .in("source_type", ["upload", "url"])
+    .contains("metadata_json", { uploaded_document_id: uploadedDocumentId })
+    .order("created_at", { ascending: true });
+  if (error) throw new Error(`Failed to fetch upload knowledge chunks: ${error.message}`);
+  return data ?? [];
 }
 
 export async function approveUpload(uploadedDocumentId: string) {

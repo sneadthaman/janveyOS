@@ -6,6 +6,7 @@ export type AiTaskType =
   | "slack_simple_reply"
   | "file_extraction"
   | "knowledge_summary"
+  | "structured_knowledge_extraction"
   | "email_draft"
   | "fallback";
 
@@ -21,6 +22,7 @@ const defaultRoutes: Record<AiTaskType, TaskRoute> = {
   slack_simple_reply: { model: "gpt-4.1-mini", reasoningEffort: "low" },
   file_extraction: { model: "gpt-4.1", reasoningEffort: "medium" },
   knowledge_summary: { model: "gpt-4.1-mini", reasoningEffort: "low" },
+  structured_knowledge_extraction: { model: "gpt-4.1-mini", reasoningEffort: "low" },
   email_draft: { model: "gpt-4.1", reasoningEffort: "medium" },
   fallback: { model: "gpt-4.1-mini", reasoningEffort: "low" }
 };
@@ -30,6 +32,7 @@ const modelEnvByTask: Record<AiTaskType, keyof typeof config> = {
   slack_simple_reply: "AI_MODEL_SLACK_SIMPLE_REPLY",
   file_extraction: "AI_MODEL_FILE_EXTRACTION",
   knowledge_summary: "AI_MODEL_KNOWLEDGE_SUMMARY",
+  structured_knowledge_extraction: "AI_MODEL_STRUCTURED_KNOWLEDGE_EXTRACTION",
   email_draft: "AI_MODEL_EMAIL_DRAFT",
   fallback: "AI_MODEL_FALLBACK"
 };
@@ -39,6 +42,7 @@ const reasoningEnvByTask: Record<AiTaskType, keyof typeof config> = {
   slack_simple_reply: "AI_REASONING_EFFORT_SLACK_SIMPLE_REPLY",
   file_extraction: "AI_REASONING_EFFORT_FILE_EXTRACTION",
   knowledge_summary: "AI_REASONING_EFFORT_KNOWLEDGE_SUMMARY",
+  structured_knowledge_extraction: "AI_REASONING_EFFORT_STRUCTURED_KNOWLEDGE_EXTRACTION",
   email_draft: "AI_REASONING_EFFORT_EMAIL_DRAFT",
   fallback: "AI_REASONING_EFFORT_FALLBACK"
 };

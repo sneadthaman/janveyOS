@@ -5,6 +5,10 @@ import { healthRouter } from "./routes/health.js";
 import { uploadsRouter } from "./routes/uploads.js";
 import { knowledgeRouter } from "./routes/knowledge.js";
 import { playbookRouter } from "./routes/playbooks.js";
+import { ingestRouter } from "./routes/ingest.js";
+import { knowledgeCardsRouter } from "./routes/knowledge-cards.js";
+import { toolsRouter } from "./routes/tools.js";
+import { agentRouter } from "./routes/agent.js";
 import { logger } from "../shared/logger.js";
 
 export function createApiServer() {
@@ -16,6 +20,10 @@ export function createApiServer() {
   app.use("/api/uploads", uploadsRouter);
   app.use("/api/knowledge", knowledgeRouter);
   app.use("/api/playbooks", playbookRouter);
+  app.use("/api/ingest", ingestRouter);
+  app.use("/api/knowledge-cards", knowledgeCardsRouter);
+  app.use("/api/tools", toolsRouter);
+  app.use("/api/agent", agentRouter);
 
   app.use((error: Error, _req: express.Request, res: express.Response, _next: express.NextFunction) => {
     if (error instanceof multer.MulterError) {

@@ -136,3 +136,66 @@ export async function fetchApprovedManagerFeedback(input: { customerSegment?: st
     return segmentMatch && floorMatch;
   });
 }
+
+export async function fetchApprovedSpecAndSummaryKnowledge(input: {
+  candidateSkus: string[];
+  customerSegment?: string;
+  floorType?: string;
+}) {
+  if (!supabaseAdminClient) return [];
+  const { data: approvedCards, error: cardsError } = await supabaseAdminClient
+    .from("knowledge_cards")
+    .select("title,body,card_type,vendor,category,segment,source_type,source_url,confidence_score,match_reason,linked_product_id")
+    .eq("approved_status", "approved")
+    .order("created_at", { ascending: false })
+    .limit(200);
+  if (cardsError) throw new Error(`Failed fetching approved knowledge cards: ${cardsError.message}`);
+
+  const { data, error } = await supabaseAdminClient
+    .from("knowledge_entries")
+    .select("title,body,category,source_type,metadata_json,approved_status")
+    .eq("approved_status", "approved")
+    .in("category", ["product_spec", "document_summary", "manager_feedback"])
+    .order("created_at", { ascending: false })
+    .limit(200);
+  if (error) throw new Error(`Failed fetching approved spec/summary knowledge: ${error.message}`);
+
+  const skus = new Set(input.candidateSkus.map((s) => s.toUpperCase()));
+  const rows = data ?? [];
+  const cardsAsKnowledge = (approvedCards ?? []).map((card) => ({
+    title: String(card.title ?? ""),
+    body: String(card.body ?? ""),
+    category: `knowledge_card:${String(card.card_type ?? "")}`,
+    source_type: String(card.source_type ?? ""),
+    metadata_json: {
+      card_type: card.card_type,
+      source_url: card.source_url,
+      match_reason: card.match_reason,
+      confidence_score: card.confidence_score,
+      vendor: card.vendor,
+      category_hint: card.category,
+      segment: card.segment,
+      linked_product_id: card.linked_product_id
+    }
+  }));
+  const allRows = [...cardsAsKnowledge, ...rows];
+  const relevant = allRows.filter((row) => {
+    const metadata = (row.metadata_json ?? {}) as Record<string, unknown>;
+    const body = String(row.body ?? "").toLowerCase();
+    const title = String(row.title ?? "").toLowerCase();
+    const matchedSku = String(metadata.matched_product_sku ?? metadata.sku ?? "").toUpperCase();
+    const segment = String(metadata.customer_segment ?? "").toLowerCase();
+    const floor = String(metadata.floor_type ?? "").toLowerCase();
+
+    const skuMatch =
+      (matchedSku && skus.has(matchedSku)) || Array.from(skus).some((sku) => body.includes(sku.toLowerCase()) || title.includes(sku.toLowerCase()));
+    const segmentMatch = input.customerSegment ? segment === input.customerSegment.toLowerCase() || segment === "" : true;
+    const floorMatch = input.floorType ? floor === input.floorType.toLowerCase() || floor === "" : true;
+
+    if (String(row.category) === "manager_feedback") return segmentMatch && floorMatch;
+    if (String(row.category).startsWith("knowledge_card:")) return skuMatch || segmentMatch;
+    return skuMatch || (segmentMatch && floorMatch);
+  });
+
+  return relevant.slice(0, 30);
+}

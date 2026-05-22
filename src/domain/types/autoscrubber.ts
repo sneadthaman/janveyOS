@@ -14,6 +14,13 @@ export interface AutoscrubberDiscoveryInput {
 
 export interface AutoscrubberRecommendationResponse {
   recommendation_id: string;
+  no_approved_pricing?: boolean;
+  knowledge_used: Array<{
+    title: string;
+    category: string;
+    source_type: string;
+    matched_product_sku?: string | null;
+  }>;
   best_fit_product: {
     sku: string;
     product_name: string;

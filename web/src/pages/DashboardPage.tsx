@@ -8,16 +8,26 @@ export function DashboardPage() {
   const [error, setError] = useState<string>("");
   const [loading, setLoading] = useState(true);
 
+  async function loadUploads() {
+    try {
+      setUploads(await getUploads());
+      sessionStorage.removeItem("uploads_dashboard_dirty");
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Failed to load uploads");
+    } finally {
+      setLoading(false);
+    }
+  }
+
   useEffect(() => {
-    void (async () => {
-      try {
-        setUploads(await getUploads());
-      } catch (e) {
-        setError(e instanceof Error ? e.message : "Failed to load uploads");
-      } finally {
-        setLoading(false);
+    void loadUploads();
+    const onFocus = () => {
+      if (sessionStorage.getItem("uploads_dashboard_dirty") === "1") {
+        void loadUploads();
       }
-    })();
+    };
+    window.addEventListener("focus", onFocus);
+    return () => window.removeEventListener("focus", onFocus);
   }, []);
 
   const stats = useMemo(() => {
@@ -39,6 +49,9 @@ export function DashboardPage() {
   return (
     <section>
       <h2>Recent Uploads</h2>
+      <div className="actions">
+        <button onClick={() => void loadUploads()}>Refresh</button>
+      </div>
       <div className="cards">
         <div className="card">Parsed: {stats.parsed}</div>
         <div className="card">Skipped: {stats.skipped}</div>
@@ -51,11 +64,15 @@ export function DashboardPage() {
           <tr>
             <th>File</th>
             <th>Parse Status</th>
-            <th>Approval Status</th>
+            <th>Source Status</th>
             <th>Parsed</th>
             <th>Skipped</th>
             <th>Pending</th>
             <th>Approved</th>
+            <th>Parsed P/A</th>
+            <th>Products P/A</th>
+            <th>Pricing P/A</th>
+            <th>Knowledge P/A</th>
           </tr>
         </thead>
         <tbody>
@@ -70,6 +87,18 @@ export function DashboardPage() {
               <td>{upload.skipped_rows}</td>
               <td>{upload.pending_approval_count}</td>
               <td>{upload.approved_count}</td>
+              <td>
+                {upload.parsed_pending_count ?? 0}/{upload.parsed_approved_count ?? 0}
+              </td>
+              <td>
+                {upload.products_pending_count ?? 0}/{upload.products_approved_count ?? 0}
+              </td>
+              <td>
+                {upload.pricing_pending_count ?? 0}/{upload.pricing_approved_count ?? 0}
+              </td>
+              <td>
+                {upload.knowledge_pending_count ?? 0}/{upload.knowledge_approved_count ?? 0}
+              </td>
             </tr>
           ))}
         </tbody>

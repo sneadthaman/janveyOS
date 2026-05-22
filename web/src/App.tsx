@@ -4,6 +4,9 @@ import { UploadDetailPage } from "./pages/UploadDetailPage";
 import { KnowledgeInboxPage } from "./pages/KnowledgeInboxPage";
 import { RecommendationsPage } from "./pages/RecommendationsPage";
 import { PlaybooksPage } from "./pages/PlaybooksPage";
+import { IngestPage } from "./pages/IngestPage";
+import { AgentActivityPage } from "./pages/AgentActivityPage";
+import { AgentActionsPage } from "./pages/AgentActionsPage";
 
 export function App() {
   return (
@@ -15,6 +18,9 @@ export function App() {
           <Link to="/knowledge">Knowledge Inbox</Link>
           <Link to="/recommendations">Recommendations</Link>
           <Link to="/playbooks">Playbooks</Link>
+          <Link to="/ingest">Ingest URL</Link>
+          <Link to="/agent-activity">Agent Activity</Link>
+          <Link to="/agent-actions">Agent Actions</Link>
         </nav>
       </header>
       <main className="main">
@@ -25,6 +31,9 @@ export function App() {
           <Route path="/knowledge" element={<KnowledgeInboxPage />} />
           <Route path="/recommendations" element={<RecommendationsPage />} />
           <Route path="/playbooks" element={<PlaybooksPage />} />
+          <Route path="/ingest" element={<IngestPage />} />
+          <Route path="/agent-activity" element={<AgentActivityPage />} />
+          <Route path="/agent-actions" element={<AgentActionsPage />} />
         </Routes>
       </main>
     </div>

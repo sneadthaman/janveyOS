@@ -1,5 +1,8 @@
 export interface ParsedUploadRow {
   rowNumber: number;
+  rawRowNumber?: number;
+  sheetName?: string;
+  category?: string;
   raw: Record<string, unknown>;
   sku: string;
   productName: string;
@@ -10,6 +13,9 @@ export interface ParsedUploadRow {
 
 export interface SkippedUploadRow {
   rowNumber: number;
+  rawRowNumber?: number;
+  sheetName?: string;
+  category?: string;
   raw: Record<string, unknown>;
   reason: string;
 }

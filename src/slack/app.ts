@@ -1,26 +1,82 @@
 import { App } from "@slack/bolt";
 import { config } from "../shared/config.js";
 import { logger } from "../shared/logger.js";
-import { generateRecommendation } from "../domain/services/recommendation-service.js";
-import { generateAutoscrubberRecommendation, parseAutoscrubberOneMessage } from "../domain/services/autoscrubber-recommendation-service.js";
+import { handleQuoteToSoSlackMessage } from "../domain/services/slack/quote-to-so-conversation.js";
 
-function formatRecommendation(response: Awaited<ReturnType<typeof generateRecommendation>>) {
-  const lines: string[] = [];
-  lines.push(`*Summary:* ${response.summary}`);
-  if (response.productRecommendations.length > 0) {
-    lines.push("*Top Product Options:*");
-    for (const item of response.productRecommendations.slice(0, 3)) {
-      lines.push(`• ${item.productName} (${item.vendor}) - ${Math.round(item.confidence * 100)}% confidence`);
-      lines.push(`  Reason: ${item.reason}`);
-    }
+type SlashTool =
+  | "item_lookup"
+  | "eta_lookup"
+  | "pricing_lookup"
+  | "quote_to_so_preview"
+  | "new_item_draft"
+  | "pricing_update_preview";
+
+function parseCommandText(raw: string): { tool?: SlashTool; payload: Record<string, unknown>; error?: string } {
+  const [toolRaw, ...rest] = raw.trim().split(" ");
+  const tool = toolRaw as SlashTool | undefined;
+  const allowed: SlashTool[] = [
+    "item_lookup",
+    "eta_lookup",
+    "pricing_lookup",
+    "quote_to_so_preview",
+    "new_item_draft",
+    "pricing_update_preview"
+  ];
+
+  if (!tool || !allowed.includes(tool)) {
+    return {
+      payload: {},
+      error:
+        "Usage: /janvey <tool> <json_payload>. Tools: item_lookup, eta_lookup, pricing_lookup, quote_to_so_preview, new_item_draft, pricing_update_preview"
+    };
   }
-  if (response.discoveryQuestions.length > 0) {
-    lines.push("*Discovery Questions:*");
-    for (const question of response.discoveryQuestions.slice(0, 5)) {
-      lines.push(`• ${question}`);
-    }
+
+  if (rest.length === 0) return { tool, payload: {} };
+
+  const payloadText = rest.join(" ").trim();
+  try {
+    return { tool, payload: JSON.parse(payloadText) as Record<string, unknown> };
+  } catch {
+    return {
+      payload: {},
+      error: "Payload must be valid JSON."
+    };
   }
-  return lines.join("\n");
+}
+
+function endpointForTool(tool: SlashTool) {
+  switch (tool) {
+    case "item_lookup":
+      return "/api/tools/item-lookup";
+    case "eta_lookup":
+      return "/api/tools/eta-lookup";
+    case "pricing_lookup":
+      return "/api/tools/pricing-lookup";
+    case "quote_to_so_preview":
+      return "/api/tools/quote-to-so/preview";
+    case "new_item_draft":
+      return "/api/tools/new-item/draft";
+    case "pricing_update_preview":
+      return "/api/tools/pricing-update/preview";
+  }
+}
+
+async function executeTool(tool: SlashTool, payload: Record<string, unknown>, actorId: string) {
+  const endpoint = endpointForTool(tool);
+  const response = await fetch(`http://localhost:${config.PORT}${endpoint}`, {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      ...(config.AGENT_SHARED_SECRET ? { "x-agent-secret": config.AGENT_SHARED_SECRET } : {})
+    },
+    body: JSON.stringify({ ...payload, requested_by: actorId, source: "slack" })
+  });
+
+  const body = (await response.json()) as Record<string, unknown>;
+  if (!response.ok) {
+    throw new Error(typeof body.error === "string" ? body.error : `Tool error (${response.status})`);
+  }
+  return body;
 }
 
 export function createSlackApp() {
@@ -33,48 +89,20 @@ export function createSlackApp() {
 
   app.command("/janvey", async ({ command, ack, respond }) => {
     await ack();
-    const text = (command.text ?? "").trim();
-    if (!text.toLowerCase().startsWith("autoscrubber")) {
-      await respond("Use `/janvey autoscrubber ...` to run autoscrubber discovery and recommendation.");
-      return;
-    }
-    const freeText = text.replace(/^autoscrubber/i, "").trim();
-    const discovery = parseAutoscrubberOneMessage(freeText);
-    discovery.slack_user_id = command.user_id;
 
-    const missing: string[] = [];
-    if (!discovery.floor_type) missing.push("floor_type");
-    if (!discovery.square_footage) missing.push("square_footage");
-    if (!discovery.cleaning_frequency) missing.push("cleaning_frequency");
-    if (!discovery.budget) missing.push("budget");
-
-    if (missing.length > 0) {
-      await respond(
-        `I can recommend now, but I still need: ${missing.join(", ")}.\n` +
-          "Reply in one line like: `school, VCT, 40000 sqft, daily, ride-on, battery, budget 15k`"
-      );
+    const parsed = parseCommandText(command.text ?? "");
+    if (parsed.error || !parsed.tool) {
+      await respond(parsed.error ?? "Invalid command.");
       return;
     }
 
-    const recommendation = await generateAutoscrubberRecommendation({
-      discovery,
-      source: "slack",
-      rawText: freeText
-    });
-    const best = recommendation.best_fit_product;
-    const alt = recommendation.value_alternative;
-    const lines = [
-      `*Best Fit:* ${best?.product_name ?? "N/A"} (${best?.sku ?? "-"})`,
-      `Vendor: ${best?.vendor ?? "-"} | Price: ${best?.price ?? "-"} | Margin: ${
-        best ? `${(best.margin_percent * 100).toFixed(2)}%` : "-"
-      }`,
-      alt ? `*Value Alternative:* ${alt.product_name} (${alt.sku}) | Margin: ${(alt.margin_percent * 100).toFixed(2)}%` : "",
-      `*Why It Fits:* ${recommendation.why_it_fits.join(" | ")}`,
-      `*How To Sell:* ${recommendation.how_to_sell.join(" | ")}`,
-      `*Questions Next:* ${recommendation.questions_to_ask_next.join(" | ")}`,
-      `Confidence: ${recommendation.confidence_score}`
-    ].filter(Boolean);
-    await respond(lines.join("\n"));
+    try {
+      const result = await executeTool(parsed.tool, parsed.payload, command.user_id);
+      await respond(JSON.stringify(result, null, 2));
+    } catch (error) {
+      logger.error("Slack tool command failed", error);
+      await respond("Command failed. Check Janvey OS logs and try again.");
+    }
   });
 
   app.message(async ({ message, say }) => {
@@ -82,35 +110,58 @@ export function createSlackApp() {
     if (message.subtype) return;
 
     try {
-      const lower = message.text.toLowerCase();
-      if (lower.includes("autoscrubber")) {
-        const discovery = parseAutoscrubberOneMessage(message.text);
-        discovery.slack_user_id = message.user;
-        const recommendation = await generateAutoscrubberRecommendation({
-          discovery,
-          source: "slack",
-          rawText: message.text
-        });
-        await say(
-          `Best fit: ${recommendation.best_fit_product?.product_name ?? "N/A"} | ` +
-            `Price: ${recommendation.best_fit_product?.price ?? "-"} | ` +
-            `Margin: ${
-              recommendation.best_fit_product
-                ? `${(recommendation.best_fit_product.margin_percent * 100).toFixed(2)}%`
-                : "-"
-            }`
-        );
+      const handled = await handleQuoteToSoSlackMessage({
+        slackUserId: message.user,
+        channelId: message.channel,
+        text: message.text,
+        reply: async (text) => {
+          await say(text);
+        }
+      });
+      if (handled) return;
+    } catch (error) {
+      logger.error("Slack quote conversion flow failed", error);
+      await say("I hit an error while preparing quote conversion. Please try again.");
+    }
+  });
+
+  app.event("app_mention", async ({ event, say }) => {
+    try {
+      if (!event.user) {
+        console.log("[slack] app_mention missing user; skipping");
         return;
       }
-      const recommendation = await generateRecommendation({
-        source: "slack",
-        text: message.text,
-        userId: message.user
+
+      console.log("[slack] received app_mention event", {
+        user: event.user,
+        channel: event.channel,
+        ts: event.ts,
+        text: event.text
       });
-      await say(formatRecommendation(recommendation));
+
+      const rawText = (event.text ?? "").trim();
+      const cleanedText = rawText.replace(/^<@[^>]+>\s*/, "").trim();
+      console.log("[slack] app_mention cleaned text", { cleanedText });
+
+      const handled = await handleQuoteToSoSlackMessage({
+        slackUserId: event.user,
+        channelId: event.channel,
+        text: cleanedText,
+        reply: async (text) => {
+          await say({
+            text,
+            thread_ts: event.ts
+          });
+        }
+      });
+
+      console.log("[slack] app_mention quote_to_so intent matched", { matched: handled });
     } catch (error) {
-      logger.error("Slack message handler failed", error);
-      await say("I hit an error while generating guidance. Try again in a moment.");
+      logger.error("Slack app_mention quote conversion flow failed", error);
+      await say({
+        text: "I hit an error while preparing quote conversion. Please try again.",
+        thread_ts: event.ts
+      });
     }
   });
 

@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import { fetchVendorPriority } from "../repositories/knowledge-repository.js";
 import { fetchApprovedAutoscrubberCandidates } from "../repositories/autoscrubber-repository.js";
 import {
+  fetchApprovedSpecAndSummaryKnowledge,
   fetchApprovedManagerFeedback,
   logAutoscrubberRecommendation
 } from "../repositories/autoscrubber-recommendation-repository.js";
@@ -90,7 +91,11 @@ function deterministicScore(input: AutoscrubberDiscoveryInput, candidate: Awaite
   return { total, breakdown };
 }
 
-async function buildAiExplanation(input: AutoscrubberDiscoveryInput, result: AutoscrubberRecommendationResponse) {
+async function buildAiExplanation(
+  input: AutoscrubberDiscoveryInput,
+  result: AutoscrubberRecommendationResponse,
+  approvedKnowledgeContext: Array<{ title: string; category: string; body: string }>
+) {
   const managerFeedback = await fetchApprovedManagerFeedback({
     customerSegment: input.customer_segment,
     floorType: input.floor_type
@@ -115,6 +120,12 @@ async function buildAiExplanation(input: AutoscrubberDiscoveryInput, result: Aut
     const ai = await runAiTask(
       "sales_recommendation",
       `Given this autoscrubber recommendation output, provide concise sales coaching JSON only.
+Approved product knowledge excerpts (do not quote verbatim in output):
+${JSON.stringify(
+  approvedKnowledgeContext.map((k) => ({ title: k.title, category: k.category, excerpt: k.body.slice(0, 280) }))
+)}
+Approved knowledge context (product specs, summaries, and manager feedback):
+${JSON.stringify(result.knowledge_used)}
 Approved manager feedback guidance (highest priority): ${JSON.stringify(managerFeedback.map((f) => f.body))}
 Input: ${JSON.stringify(input)}
 Recommendation: ${JSON.stringify(result)}
@@ -147,8 +158,37 @@ export async function generateAutoscrubberRecommendation(input: {
   rawText?: string;
 }): Promise<AutoscrubberRecommendationResponse> {
   const candidates = await fetchApprovedAutoscrubberCandidates();
+  if (candidates.length === 0) {
+    const response: AutoscrubberRecommendationResponse = {
+      recommendation_id: randomUUID(),
+      no_approved_pricing: true,
+      knowledge_used: [],
+      best_fit_product: null,
+      value_alternative: null,
+      why_it_fits: ["No approved autoscrubber pricing dataset is currently available."],
+      how_to_sell: ["Upload and approve autoscrubber pricing in Manager Console before recommending specific products."],
+      objections: [],
+      questions_to_ask_next: ["Do we have the latest approved vendor autoscrubber pricing file uploaded?"],
+      confidence_score: 0.1,
+      score_details: [],
+      ai_explanation: ""
+    };
+    await logAutoscrubberRecommendation({
+      discovery: input.discovery,
+      source: input.source,
+      rawText: input.rawText,
+      response
+    });
+    return response;
+  }
+
   const vendorPriority = await fetchVendorPriority();
   const playbook = await findRelevantPlaybook("autoscrubber", input.discovery.customer_segment);
+  const approvedKnowledge = await fetchApprovedSpecAndSummaryKnowledge({
+    candidateSkus: candidates.map((c) => c.sku),
+    customerSegment: input.discovery.customer_segment,
+    floorType: input.discovery.floor_type
+  });
   const vendorRankMap = new Map<string, number>();
   for (const vp of vendorPriority) vendorRankMap.set(vp.vendor, vp.priorityRank);
 
@@ -176,6 +216,15 @@ export async function generateAutoscrubberRecommendation(input: {
 
   const response: AutoscrubberRecommendationResponse = {
     recommendation_id: randomUUID(),
+    knowledge_used: approvedKnowledge.map((k) => {
+      const metadata = (k.metadata_json ?? {}) as Record<string, unknown>;
+      return {
+        title: String(k.title ?? ""),
+        category: String(k.category ?? ""),
+        source_type: String(k.source_type ?? ""),
+        matched_product_sku: metadata.matched_product_sku ? String(metadata.matched_product_sku) : null
+      };
+    }),
     best_fit_product: best
       ? {
           sku: best.candidate.sku,
@@ -211,7 +260,12 @@ export async function generateAutoscrubberRecommendation(input: {
 
   const explanation = await buildAiExplanation(
     { ...input.discovery, notes: `${input.discovery.notes ?? ""}\nPlaybook:${JSON.stringify(playbook ?? {})}` },
-    response
+    response,
+    approvedKnowledge.map((k) => ({
+      title: String(k.title ?? ""),
+      category: String(k.category ?? ""),
+      body: String(k.body ?? "")
+    }))
   );
   response.why_it_fits = explanation.why;
   response.how_to_sell = explanation.sell;

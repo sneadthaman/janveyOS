@@ -46,6 +46,7 @@ export function RecommendationsPage() {
             ]
               .filter(Boolean)
               .join(" | ");
+            const knowledgeUsed = output?.knowledge_used ?? [];
             return (
               <tr key={row.id}>
                 <td>{new Date(row.created_at).toLocaleString()}</td>
@@ -60,7 +61,19 @@ export function RecommendationsPage() {
                       }, ${alt ? `${(alt.margin_percent * 100).toFixed(2)}%` : "-"}`
                     : "-"}
                 </td>
-                <td>{reasoning || "-"}</td>
+                <td>
+                  <div>{reasoning || "-"}</div>
+                  {knowledgeUsed.length > 0 ? (
+                    <div className="meta">
+                      knowledge_used:{" "}
+                      {knowledgeUsed
+                        .map((k) => `${k.title} [${k.category}]${k.matched_product_sku ? ` (${k.matched_product_sku})` : ""}`)
+                        .join(" | ")}
+                    </div>
+                  ) : (
+                    <div className="meta">knowledge_used: none</div>
+                  )}
+                </td>
                 <td>
                   <div className="actions">
                     <button

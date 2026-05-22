@@ -16,7 +16,10 @@ export async function listPlaybooks(category?: string) {
   let query = supabaseAdminClient.from("sales_playbooks").select("*").order("updated_at", { ascending: false });
   if (category) query = query.eq("category", category);
   const { data, error } = await query;
-  if (error) throw new Error(`Failed to list playbooks: ${error.message}`);
+  if (error) {
+    if (error.message.includes("Could not find the table")) return [];
+    throw new Error(`Failed to list playbooks: ${error.message}`);
+  }
   return data ?? [];
 }
 
