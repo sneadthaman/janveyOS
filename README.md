@@ -1,12 +1,28 @@
-# Janvey OS MVP
+# Janvey OS Middleware MVP
 
-Janvey OS is an AI-powered sales coach and knowledge system for I. Janvey & Sons.
-This repository contains the initial MVP backend scaffold:
+Janvey OS is the middleware control plane between OpenClaw agents, Slack, and Janvey business systems.
 
-- Slack app (rep-facing, Slack Bolt)
-- API server (Node.js + TypeScript + Express)
-- Supabase integration (Postgres + vector-ready schema)
-- OpenAI-powered recommendation flow with fallback behavior
+This MVP intentionally focuses on:
+- safe business tools
+- permission checks
+- approval gates
+- audit logging
+- integration boundaries (NetSuite/email/vendor systems stubbed behind tools)
+- manager visibility
+
+## Architecture
+
+```text
+Slack
+  ↓
+OpenClaw Agent
+  ↓
+Janvey OS Middleware API
+  ↓
+Safe Business Tools
+  ↓
+NetSuite / Email / Vendor Portals (next)
+```
 
 ## Quick Start
 
@@ -16,10 +32,11 @@ cp .env.example .env
 ```
 
 2. Fill in required keys:
-- `OPENAI_API_KEY`
-- `SUPABASE_URL`
-- `SUPABASE_SERVICE_ROLE_KEY`
-- Slack keys for bot/socket mode
+- `SUPABASE_URL` and `SUPABASE_SERVICE_ROLE_KEY`
+- Slack keys for `/janvey` command (optional)
+- `AGENT_SHARED_SECRET` (optional but recommended)
+- `NETSUITE_QUOTE_LOOKUP_RESTLET_URL` for Slack quote lookup flow
+- NetSuite OAuth/TBA keys and RESTlet URLs for quote lookup + live transform (optional unless using live execution)
 
 3. Install and run:
 ```bash
@@ -27,222 +44,182 @@ npm install
 npm run dev
 ```
 
-Manager console (separate Vite app):
-```bash
-npm run dev:web
-```
-Open `http://localhost:5174`.
-
-## AI Model Router
-
-Janvey OS uses a central router at [`src/ai/model-router.ts`](/Users/samjanvey/Desktop/Developer/janveyOS/src/ai/model-router.ts) so model choice is task-based instead of hardcoded.
-All AI execution must go through [`src/ai/ai-client.ts`](/Users/samjanvey/Desktop/Developer/janveyOS/src/ai/ai-client.ts), not direct OpenAI SDK calls.
-
-Task types:
-- `sales_recommendation`
-- `slack_simple_reply`
-- `file_extraction`
-- `knowledge_summary`
-- `email_draft`
-- `fallback`
-
-Optional env overrides are available in [`.env.example`](/Users/samjanvey/Desktop/Developer/janveyOS/.env.example):
-- `AI_MODEL_*` for per-task model selection
-- `AI_REASONING_EFFORT_*` for per-task reasoning effort (`minimal|low|medium|high`)
-
 4. Health check:
 ```bash
 curl http://localhost:3000/health
 ```
 
-## API Endpoints
+## Tool Endpoints (Phase 1)
 
-- `GET /health`
-- `POST /api/recommendations`
-- `POST /api/recommendations/autoscrubber`
-  - body fields:
-    - `customer_name`
-    - `customer_segment`
-    - `floor_type`
-    - `square_footage`
-    - `cleaning_frequency`
-    - `walk_behind_or_ride_on`
-    - `battery_preference`
-    - `budget`
-    - `existing_machine`
-    - `notes`
-  - response includes:
-    - `best_fit_product`
-    - `value_alternative`
-    - `price/cost/margin`
-    - `why_it_fits`
-    - `how_to_sell`
-    - `objections`
-    - `questions_to_ask_next`
-    - `confidence_score`
-- `GET /api/recommendations/recent`
-- `POST /api/recommendations/:id/review`
-- `POST /api/recommendations/:id/feedback`
-  - supports:
-    - `good_recommendation`
-    - `bad_recommendation`
-    - `needs_correction`
-    - `wrong_product`
-    - `bad_tone`
-    - `missing_context`
-  - optional `free_text_feedback` creates a pending `knowledge_entries` draft (`category=manager_feedback`, `source_type=recommendation_feedback`)
-  - body: `{ "userId": "sam", "source": "web", "text": "Need an autoscrubber for a school" }`
-- `POST /api/recommendations/feedback`
-  - body: `{ "recommendationId": "...", "userId": "sam", "feedbackType": "approve|edit|reject", "notes": "..." }`
-- `POST /api/uploads`
-  - multipart form-data:
-    - `file` (`.xlsx`, `.csv`, `.pdf`)
-    - `vendor` (`Nilfisk|Taski|Triple-S`, default `Nilfisk`)
-    - `documentType` (default `price_sheet`)
-- `GET /api/uploads/:id/parsed-preview`
-- `GET /api/uploads`
-- `GET /api/uploads/:id`
-- `POST /api/uploads/:id/approve`
-- `POST /api/uploads/:id/reject`
-- `POST /api/uploads/:id/reprocess` (placeholder)
-- `GET /api/knowledge?status=pending|approved|rejected`
-- `PATCH /api/knowledge/:id`
-- `POST /api/knowledge/:id/approve`
-- `POST /api/knowledge/:id/reject`
+All endpoints are explicit and deterministic under `/api/tools/*`.
 
-## Supabase Setup
+Optional auth header:
+- `x-agent-secret: <AGENT_SHARED_SECRET>`
+- If `AGENT_SHARED_SECRET` is set, requests without a matching value are rejected.
 
-Run [`supabase/schema.sql`](/Users/samjanvey/Desktop/Developer/janveyOS/supabase/schema.sql) in your Supabase SQL editor.
+Read-only tools (logged to `agent_tool_calls`):
+- `POST /api/tools/item-lookup`
+- `POST /api/tools/eta-lookup`
+- `POST /api/tools/pricing-lookup`
 
-## Upload Ingestion MVP
+Preview/draft tools (create `agent_action_requests`, no execution):
+- `POST /api/tools/quote-to-so/preview`
+- `POST /api/tools/new-item/draft`
+- `POST /api/tools/pricing-update/preview`
 
-### Behavior
+No real NetSuite writes are implemented in this phase.
 
-- Files are saved locally to `./uploads` for development.
-- Upload metadata is stored in `uploaded_documents`.
-- CSV/XLSX parsing currently targets Nilfisk dealer-style columns:
-  - SKU/item number
-  - product name/description
-  - suggested list price
-  - dealer net price
-- Parsed rows are stored in `parsed_product_rows` with `approved_status = pending`.
-- Bad rows are skipped and logged with `skip_reason` (row-level; not fatal for entire upload).
-- Pricing math applied per parsed row:
-  - `true_cost = dealer_net * 0.93`
-  - `ed_data_sell_price = list_price * 0.79`
-  - `gross_profit = sell_price - true_cost`
-  - `margin_percent = gross_profit / sell_price`
-- `POST /api/uploads/:id/approve` promotes parsed rows into:
-  - `products` (`approved_status = approved`)
-  - `product_pricing` (`approved_status = approved`)
-  - `knowledge_entries` (`category=product`, `source_type=upload`, `approved_status=approved`)
+`agent_action_requests` now includes `requires_approval` so action policies are explicit per request.
 
-### curl: Upload
+## Agent Manager Endpoints (MVP)
 
-```bash
-curl -X POST http://localhost:3000/api/uploads \
-  -F "vendor=Nilfisk" \
-  -F "documentType=price_sheet" \
-  -F "file=@/absolute/path/to/nilfisk-price-list.xlsx"
-```
+- `GET /api/agent/tool-calls`
+  - returns recent `agent_tool_calls` newest first
+- `GET /api/agent/action-requests`
+  - returns recent `agent_action_requests` newest first
+- `POST /api/agent/action-requests/:id/approve`
+  - only `pending` requests can be approved
+  - sets `status=approved`, `approved_by`, `approved_at`, `updated_at`
+- `POST /api/agent/action-requests/:id/reject`
+  - only `pending` requests can be rejected
+  - sets `status=rejected`, `updated_at`
 
-Example response:
+Approval/rejection does not execute any downstream business action yet.
+
+## Execution Worker MVP
+
+- Polls approved action requests every 10 seconds (configurable)
+- Claims jobs with conditional update (`status=approved`, `claimed_at is null`) to avoid double execution
+- Executes handlers with explicit live-gating for NetSuite Quote -> Sales Order
+- Writes execution attempt logs to `agent_action_execution_logs`
+- Retries failed jobs up to 3 attempts
+- Marks terminal status as `failed` after max retries
+- `quote_to_so` execution defaults to production-safe dry-run preview
+- live NetSuite transform runs only when explicitly enabled
+- Uses NetSuite-native transform semantics (`estimate` -> `salesorder`) in output preview
+- Never auto-approves, fulfills, or bills downstream records
+
+Environment:
+- `EXECUTION_WORKER_ENABLED=true|false` (default true)
+- `EXECUTION_WORKER_INTERVAL_MS=10000`
+- `NETSUITE_EXECUTION_MODE=dry_run|live` (invalid/missing defaults to `dry_run`)
+- `NETSUITE_LIVE_QUOTE_TO_SO_ENABLED=true|false` (default `false`)
+- `NETSUITE_QUOTE_LOOKUP_RESTLET_URL`
+- `NETSUITE_QUOTE_TO_SO_RESTLET_URL`
+- Optional NetSuite auth envs for RESTlet/OAuth/TBA wiring:
+  - `NETSUITE_ACCOUNT_ID`
+  - `NETSUITE_CONSUMER_KEY`
+  - `NETSUITE_CONSUMER_SECRET`
+  - `NETSUITE_TOKEN_ID`
+  - `NETSUITE_TOKEN_SECRET`
+  - `NETSUITE_RESTLET_AUTH_HEADER`
+
+### Quote -> Sales Order Dry-Run (Phase 2C)
+
+Expected action request `input_json` example:
+
 ```json
 {
-  "uploaded_document_id": "uuid",
-  "parse_status": "parsed_with_errors",
-  "parsed_rows": 120,
-  "skipped_rows": 4,
-  "parser_message": null
+  "action_type": "quote_to_so",
+  "quote_internal_id": "12345",
+  "memo": "Dry run conversion test",
+  "po_number": "TEST-PO-123",
+  "approval_status_target": "Pending Approval"
 }
 ```
 
-### curl: Parsed Preview
+Behavior:
+- validates `quote_internal_id` (or other supported aliases)
+- builds a `record.transform` preview payload (`estimate` -> `salesorder`)
+- does not call NetSuite
+- does not create a Sales Order
+- writes `output_json` with `wouldSubmit=false` and `mode=dry_run`
+- carries intended post-transform approval target (`Pending Approval` by default)
 
-```bash
-curl http://localhost:3000/api/uploads/<uploaded_document_id>/parsed-preview
+Live behavior:
+- If `NETSUITE_EXECUTION_MODE=live` and `NETSUITE_LIVE_QUOTE_TO_SO_ENABLED=true`, the execution worker calls the NetSuite Quote -> Sales Order transform RESTlet after manager approval.
+- If `NETSUITE_EXECUTION_MODE=live` but `NETSUITE_LIVE_QUOTE_TO_SO_ENABLED` is not `true`, execution fails with a non-retryable safety error.
+
+## Manager Console Pages
+
+- `/agent-activity` shows recent tool calls
+- `/agent-actions` shows action requests and approve/reject controls
+
+No auth yet.
+
+## Persistence
+
+Supabase tables:
+- `agent_tool_calls`
+- `agent_action_requests`
+
+See [`supabase/schema.sql`](/Users/samjanvey/Desktop/Developer/janveyOS/supabase/schema.sql) for definitions.
+
+## Slack Command (MVP)
+
+`/janvey <tool> <json_payload>`
+
+Examples:
+```text
+/janvey item_lookup {"query":"DIV 95892221"}
+/janvey eta_lookup {"sku":"DIV 95892221","customer":"CHS","sales_order":"SO12345"}
+/janvey pricing_update_preview {"sku":"DIV 95892221","customer":"CHS","new_price":42.5}
 ```
 
-Returns:
-- upload metadata
-- summary totals
-- `parsed_rows` (pending rows)
-- `skipped_rows` with explicit reasons
+## Slack Quote -> SO Conversation (Phase 2E)
 
-### curl: Approve Parsed Rows
+Example:
 
-```bash
-curl -X POST http://localhost:3000/api/uploads/<uploaded_document_id>/approve
-```
+User:
+`convert quote EST123`
 
-Example response:
-```json
-{
-  "uploaded_document_id": "uuid",
-  "approved_rows": 120
-}
-```
+Bot:
+`I found Quote EST123 for ABC Customer, total $1,234.56. Do you want to add a PO number before I submit this for manager approval?`
 
-### Automated Upload Test Script
+User:
+`po PO-456`
 
-Run:
-```bash
-npm run test:upload-nilfisk
-```
+Bot:
+`Submitted Quote EST123 with PO # PO-456 for manager approval.`
 
-The script will:
-- upload a local sample Nilfisk XLSX
-- print parse summary
-- fetch parsed preview
-- approve the upload
-- print approved product count
+Expired quote behavior:
+- `Quote EST999 is expired as of 04/30/2026. I won't submit it for conversion unless we add an override flow.`
+- no action request is created for expired quotes
 
-It expects API server on `http://localhost:3000` (override with `JANVEY_API_URL`).
+Notes:
+- Slack does not execute NetSuite transform directly.
+- Slack only creates `quote_to_so` action requests (`requires_approval=true`).
+- Conversation state is in-memory for MVP and does not survive server restarts.
 
-## Troubleshooting
+## Live Quote -> SO Settings
 
-- Supabase env issues:
-  - If upload returns `Supabase is required for uploads.`, set `SUPABASE_URL` and `SUPABASE_SERVICE_ROLE_KEY` in `.env`.
-- Missing schema:
-  - If table errors appear (e.g. `relation ... does not exist`), run [`supabase/schema.sql`](/Users/samjanvey/Desktop/Developer/janveyOS/supabase/schema.sql) in Supabase SQL editor.
-- Multer/file upload issues:
-  - Ensure request is `multipart/form-data` and file field name is exactly `file`.
-  - Allowed extensions: `.xlsx`, `.csv`, `.pdf`.
-- Slack env not configured:
-  - API still runs; Slack integration is disabled with a warning until Slack tokens are provided.
-- OpenAI key missing:
-  - Recommendation endpoint falls back to deterministic coaching output and still logs recommendation attempts.
+To enable live NetSuite transform execution (post-approval only):
 
-## Manager Console MVP
+- `NETSUITE_EXECUTION_MODE=live`
+- `NETSUITE_LIVE_QUOTE_TO_SO_ENABLED=true`
+- `NETSUITE_QUOTE_TO_SO_RESTLET_URL=<your quote->so RESTlet URL>`
+- NetSuite OAuth/TBA credentials:
+  - `NETSUITE_ACCOUNT_ID`
+  - `NETSUITE_CONSUMER_KEY`
+  - `NETSUITE_CONSUMER_SECRET`
+  - `NETSUITE_TOKEN_ID`
+  - `NETSUITE_TOKEN_SECRET`
 
-Routes:
-- `/dashboard`: recent uploads, parse status, parsed/skipped counts, pending/approved totals
-- `/uploads/:id`: parsed rows with pricing/margin details, skipped rows, approve/reject/reprocess actions
-- `/knowledge`: pending knowledge inbox with approve/edit/reject actions
-- `/recommendations`: recent recommendation logs with manager feedback actions
-- `/playbooks`: autoscrubber playbook builder/editor for selling logic by segment
+Slack still does not execute NetSuite directly. Slack only creates an approval-gated action request that the worker executes after manager approval.
 
-## Slack Autoscrubber Flow
+## OpenClaw Routing
 
-- Slash command:
-  - `/janvey autoscrubber need scrubber for school, VCT, 40000 sqft, daily use, battery, budget 15k`
-- If key discovery fields are missing, Janvey asks follow-up prompts.
+OpenClaw should call Janvey OS APIs directly:
+- `POST {JANVEY_OS_API_BASE_URL}/api/tools/item-lookup`
+- `POST {JANVEY_OS_API_BASE_URL}/api/tools/eta-lookup`
+- `POST {JANVEY_OS_API_BASE_URL}/api/tools/pricing-lookup`
+- `POST {JANVEY_OS_API_BASE_URL}/api/tools/quote-to-so/preview`
+- `POST {JANVEY_OS_API_BASE_URL}/api/tools/new-item/draft`
+- `POST {JANVEY_OS_API_BASE_URL}/api/tools/pricing-update/preview`
 
-## MVP Logic Notes
+Skill file:
+- [`openclaw-skills/janvey-os/SKILL.md`](/Users/samjanvey/Desktop/Developer/janveyOS/openclaw-skills/janvey-os/SKILL.md)
 
-- Recommendation pipeline currently:
-  1. Pulls strategy rules and vendor priority from Supabase.
-  2. Prompts OpenAI with sales context.
-  3. Logs every recommendation for later review/training.
-  4. Falls back to deterministic coaching output if OpenAI is unavailable.
+## Legacy Modules
 
-- Next iterations:
-  - Add product/pricing ingestion from uploaded files.
-  - Add retrieval over `products.knowledge_embedding` via pgvector.
-  - Add margin calculation service with contract overrides.
-  - Build manager web console for knowledge approvals and strategy edits.
-- `GET /api/playbooks?category=autoscrubber`
-- `GET /api/playbooks/:id`
-- `POST /api/playbooks`
-- `PATCH /api/playbooks/:id`
-- `DELETE /api/playbooks/:id`
+The existing recommendation, ingestion, and knowledge routes remain in the repo for now, but they are not the primary product direction for this MVP. The explicit `/api/tools/*` routes define the current architecture boundary.
