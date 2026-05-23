@@ -119,6 +119,36 @@ test("creates approval request when extraction and lookup succeed", async () => 
   assert.equal(createdRequest, 1);
 });
 
+test("PO lookup validation sends payload as { po: extracted.poNumber }", async () => {
+  let capturedPayload: Record<string, unknown> | null = null;
+  await processEtaGraphMessage(
+    {
+      id: "m7",
+      subject: "ETA",
+      bodyText: "PO289807 ETA 6/1"
+    },
+    "AI ETA",
+    baseDeps({
+      extractEtaPayloadFromEmail: async () => ({
+        poNumber: "PO289807",
+        etaDate: "2026-06-01",
+        trackingNumber: null,
+        vendorName: "Vendor",
+        items: [],
+        confidence: "HIGH",
+        etaSource: "email",
+        etaNotes: "note"
+      }),
+      lookupOpenPurchaseOrder: async (input: { po: string }) => {
+        capturedPayload = input as unknown as Record<string, unknown>;
+        return { success: true, poInternalId: "9010", poNumber: "PO289807", lines: [] };
+      }
+    }) as any
+  );
+
+  assert.deepEqual(capturedPayload, { po: "PO289807" });
+});
+
 test("run ingestion processes copied/read messages in AI ETA folder", async () => {
   const prevEnabled = config.MICROSOFT_GRAPH_ENABLED;
   const prevUser = config.MICROSOFT_GRAPH_USER_EMAIL;

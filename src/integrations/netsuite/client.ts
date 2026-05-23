@@ -687,8 +687,8 @@ function normalizeOpenPoLookupResponse(raw: Record<string, unknown>): OpenPurcha
   };
 }
 
-export async function lookupOpenPurchaseOrder(input: { poNumber: string }): Promise<OpenPurchaseOrderLookupResult> {
-  const poNumber = input.poNumber.trim();
+export async function lookupOpenPurchaseOrder(input: { po: string }): Promise<OpenPurchaseOrderLookupResult> {
+  const po = input.po.trim();
   if (!config.NETSUITE_OPEN_PO_LOOKUP_RESTLET_URL) {
     return {
       success: false,
@@ -708,14 +708,14 @@ export async function lookupOpenPurchaseOrder(input: { poNumber: string }): Prom
   console.log("[netsuite] lookupOpenPurchaseOrder start", {
     hasLookupUrl: Boolean(config.NETSUITE_OPEN_PO_LOOKUP_RESTLET_URL),
     hasAuthHeader: Boolean(headers.authorization),
-    poNumber
+    po
   });
 
   try {
     const response = await fetch(config.NETSUITE_OPEN_PO_LOOKUP_RESTLET_URL, {
       method: "POST",
       headers,
-      body: JSON.stringify({ po_number: poNumber })
+      body: JSON.stringify({ po })
     });
 
     console.log("[netsuite] lookupOpenPurchaseOrder response status", { status: response.status });

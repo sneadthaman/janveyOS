@@ -7,7 +7,7 @@ test("open PO lookup returns config error when URL missing", async () => {
   const prev = config.NETSUITE_OPEN_PO_LOOKUP_RESTLET_URL;
   config.NETSUITE_OPEN_PO_LOOKUP_RESTLET_URL = undefined;
   try {
-    const result = await lookupOpenPurchaseOrder({ poNumber: "PO289731" });
+    const result = await lookupOpenPurchaseOrder({ po: "PO289731" });
     assert.equal(result.success, false);
     assert.equal(result.code, "CONFIG_ERROR");
   } finally {
@@ -22,7 +22,7 @@ test("open PO lookup normalizes success payload", async () => {
 
   globalThis.fetch = (async (_url, init) => {
     const body = typeof init?.body === "string" ? JSON.parse(init.body) : {};
-    assert.deepEqual(body, { po_number: "PO289731" });
+    assert.deepEqual(body, { po: "PO289731" });
 
     return {
       ok: true,
@@ -53,7 +53,7 @@ test("open PO lookup normalizes success payload", async () => {
   }) as typeof fetch;
 
   try {
-    const result = await lookupOpenPurchaseOrder({ poNumber: "PO289731" });
+    const result = await lookupOpenPurchaseOrder({ po: "PO289731" });
     assert.equal(result.success, true);
     assert.equal(result.poInternalId, "9001");
     assert.equal(result.tranId, "PO289731");
@@ -80,7 +80,7 @@ test("open PO lookup handles failure response", async () => {
   }) as typeof fetch;
 
   try {
-    const result = await lookupOpenPurchaseOrder({ poNumber: "PO289731" });
+    const result = await lookupOpenPurchaseOrder({ po: "PO289731" });
     assert.equal(result.success, false);
     assert.equal(result.code, "LOOKUP_FAILED");
   } finally {

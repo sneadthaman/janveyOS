@@ -171,7 +171,9 @@ export async function processEtaGraphMessage(
       return { status: "failed" as const, reason: "missing_po", row };
     }
 
-    const poLookup = await deps.lookupOpenPurchaseOrder({ poNumber });
+    const poLookupPayload = { po: poNumber };
+    logger.info("eta_email_ingestion.po_lookup.request", poLookupPayload);
+    const poLookup = await deps.lookupOpenPurchaseOrder(poLookupPayload);
     if (!poLookup.success) {
       row = await deps.updateEtaEmailIngestion({
         id: row.id,
