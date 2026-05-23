@@ -1,5 +1,5 @@
 import { startActionExecutionWorker } from "./domain/services/action-execution-worker.js";
-import { config, assertProductionEnv } from "./shared/config.js";
+import { config, assertProductionEnv, isRawEnvSet } from "./shared/config.js";
 import { logger } from "./shared/logger.js";
 
 async function bootstrapWorker() {
@@ -11,7 +11,8 @@ async function bootstrapWorker() {
   logger.info("Worker process started", {
     workerName: "action-execution-worker",
     intervalMs: workerIntervalMs,
-    liveQuoteToSoEnabled: config.NETSUITE_LIVE_QUOTE_TO_SO_ENABLED === "true",
+    netsuiteLiveQuoteToSoEnv: isRawEnvSet("NETSUITE_LIVE_QUOTE_TO_SO_ENABLED") ? "set" : "missing",
+    liveQuoteToSoEnabled: config.NETSUITE_LIVE_QUOTE_TO_SO_ENABLED,
     env: config.NODE_ENV
   });
 

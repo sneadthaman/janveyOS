@@ -108,7 +108,7 @@ export async function runQuoteToSoDryRunHandler(
     normalizeStringOrNumber(firstDefined(input, ["agentActionRequestId", "agent_action_request_id"])) || undefined;
 
   if (mode === "live") {
-    if (config.NETSUITE_LIVE_QUOTE_TO_SO_ENABLED !== "true") {
+    if (!config.NETSUITE_LIVE_QUOTE_TO_SO_ENABLED) {
       throw new NonRetryableActionError(
         "Live NetSuite execution for quote_to_so is disabled by NETSUITE_LIVE_QUOTE_TO_SO_ENABLED.",
         {

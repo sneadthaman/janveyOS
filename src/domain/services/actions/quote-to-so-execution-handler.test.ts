@@ -14,7 +14,7 @@ function withLiveEnabled() {
   const previousMode = config.NETSUITE_EXECUTION_MODE;
   const previousEnabled = config.NETSUITE_LIVE_QUOTE_TO_SO_ENABLED;
   config.NETSUITE_EXECUTION_MODE = "live";
-  config.NETSUITE_LIVE_QUOTE_TO_SO_ENABLED = "true";
+  config.NETSUITE_LIVE_QUOTE_TO_SO_ENABLED = true;
   return () => {
     config.NETSUITE_EXECUTION_MODE = previousMode;
     config.NETSUITE_LIVE_QUOTE_TO_SO_ENABLED = previousEnabled;

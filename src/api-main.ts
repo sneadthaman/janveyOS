@@ -1,4 +1,4 @@
-import { config, assertProductionEnv } from "./shared/config.js";
+import { config, assertProductionEnv, isRawEnvSet } from "./shared/config.js";
 import { logger } from "./shared/logger.js";
 import { createApiServer } from "./server/api.js";
 import { createSlackApp } from "./slack/app.js";
@@ -84,6 +84,11 @@ function registerProcessLevelHandlers() {
 async function bootstrapApi() {
   assertProductionEnv();
   registerProcessLevelHandlers();
+  logger.info("Quote-to-SO live flag startup state", {
+    netsuiteLiveQuoteToSoEnv: isRawEnvSet("NETSUITE_LIVE_QUOTE_TO_SO_ENABLED") ? "set" : "missing",
+    liveQuoteToSoEnabled: config.NETSUITE_LIVE_QUOTE_TO_SO_ENABLED,
+    env: config.NODE_ENV
+  });
 
   const server = createApiServer();
   let slack: App | null = null;

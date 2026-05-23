@@ -7,6 +7,14 @@ const optionalEnvString = z.preprocess((value) => {
   return trimmed.length === 0 ? undefined : trimmed;
 }, z.string().min(1).optional());
 
+function parseBooleanEnv(value: unknown) {
+  if (typeof value === "boolean") return value;
+  if (typeof value === "number") return value === 1;
+  if (typeof value !== "string") return false;
+  const normalized = value.trim().toLowerCase();
+  return normalized === "true" || normalized === "1" || normalized === "yes";
+}
+
 const schema = z.object({
   NODE_ENV: z.enum(["development", "test", "production"]).default("development"),
   PORT: z.coerce.number().default(3000),
@@ -27,7 +35,7 @@ const schema = z.object({
   EXECUTION_WORKER_ENABLED: optionalEnvString,
   EXECUTION_WORKER_INTERVAL_MS: z.coerce.number().optional(),
   NETSUITE_EXECUTION_MODE: optionalEnvString,
-  NETSUITE_LIVE_QUOTE_TO_SO_ENABLED: z.enum(["true", "false"]).default("false"),
+  NETSUITE_LIVE_QUOTE_TO_SO_ENABLED: z.preprocess((value) => parseBooleanEnv(value), z.boolean()).default(false),
   NETSUITE_QUOTE_LOOKUP_RESTLET_URL: optionalEnvString,
   NETSUITE_QUOTE_TO_SO_RESTLET_URL: optionalEnvString,
   NETSUITE_SALES_ORDER_LOOKUP_RESTLET_URL: optionalEnvString,
@@ -63,6 +71,11 @@ if (!parsed.success) {
 
 export const config = parsed.data;
 
+export function isRawEnvSet(name: string) {
+  const raw = process.env[name];
+  return typeof raw === "string" && raw.trim().length > 0;
+}
+
 export function assertProductionEnv(options?: { requirePort?: boolean }) {
   if (config.NODE_ENV !== "production") return;
   const requirePort = options?.requirePort ?? true;
@@ -88,6 +101,12 @@ export function assertProductionEnv(options?: { requirePort?: boolean }) {
   const missing = required.filter((key) => {
     const value = config[key];
     if (typeof value === "number") return !Number.isFinite(value);
+    if (typeof value === "boolean") {
+      if (key === "NETSUITE_LIVE_QUOTE_TO_SO_ENABLED") {
+        return !isRawEnvSet("NETSUITE_LIVE_QUOTE_TO_SO_ENABLED");
+      }
+      return false;
+    }
     return !value;
   });
 
