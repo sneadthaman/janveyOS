@@ -17,6 +17,23 @@ interface TaskRoute {
   reasoningEffort?: ReasoningEffort;
 }
 
+function normalizeModelName(model: string) {
+  return model.trim().toLowerCase();
+}
+
+export function supportsReasoningEffort(model: string) {
+  const normalized = normalizeModelName(model);
+  if (!normalized) return false;
+
+  // Conservative allow-list: only include families known to support reasoning controls.
+  return (
+    normalized.startsWith("gpt-5") ||
+    normalized.startsWith("o1") ||
+    normalized.startsWith("o3") ||
+    normalized.startsWith("o4")
+  );
+}
+
 const defaultRoutes: Record<AiTaskType, TaskRoute> = {
   sales_recommendation: { model: "gpt-4.1-mini", reasoningEffort: "medium" },
   slack_simple_reply: { model: "gpt-4.1-mini", reasoningEffort: "low" },
@@ -74,7 +91,7 @@ export function buildResponseCreateParams(
     model: route.model,
     input
   };
-  if (route.reasoningEffort && route.reasoningEffort !== "minimal") {
+  if (supportsReasoningEffort(route.model) && route.reasoningEffort && route.reasoningEffort !== "minimal") {
     params.reasoning = { effort: route.reasoningEffort };
   }
   return params;

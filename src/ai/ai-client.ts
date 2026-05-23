@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import type OpenAI from "openai";
-import { resolveModelRoute, type AiTaskType } from "./model-router.js";
+import { buildResponseCreateParams, resolveModelRoute, type AiTaskType } from "./model-router.js";
 import { openaiClient } from "../integrations/openai/client.js";
 import { logger } from "../shared/logger.js";
 import { supabaseAdminClient } from "../integrations/supabase/client.js";
@@ -54,13 +54,24 @@ async function logAiCall(
 export async function runAiTask(
   taskType: AiTaskType,
   input: string,
-  options: RunAiTaskOptions = {}
+  options: RunAiTaskOptions = {},
+  deps?: {
+    client?: {
+      responses: {
+        create: (params: OpenAI.Responses.ResponseCreateParamsNonStreaming) => Promise<{
+          output_text?: string | null;
+          id?: string;
+        }>;
+      };
+    } | null;
+  }
 ): Promise<AiTaskResult> {
   const route = resolveModelRoute(taskType);
   const started = Date.now();
   const fallbackText = options.fallbackText ?? defaultFallback(taskType);
+  const client = deps?.client ?? openaiClient;
 
-  if (!openaiClient) {
+  if (!client) {
     const result: AiTaskResult = {
       text: fallbackText,
       model: route.model,
@@ -74,14 +85,8 @@ export async function runAiTask(
   }
 
   try {
-    const params: OpenAI.Responses.ResponseCreateParamsNonStreaming = {
-      model: route.model,
-      input
-    };
-    if (route.reasoningEffort && route.reasoningEffort !== "minimal") {
-      params.reasoning = { effort: route.reasoningEffort };
-    }
-    const response = await openaiClient.responses.create(params);
+    const params = buildResponseCreateParams(taskType, input);
+    const response = await client.responses.create(params);
     const result: AiTaskResult = {
       text: response.output_text ?? "",
       model: route.model,
