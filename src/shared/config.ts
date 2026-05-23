@@ -62,3 +62,36 @@ if (!parsed.success) {
 }
 
 export const config = parsed.data;
+
+export function assertProductionEnv(options?: { requirePort?: boolean }) {
+  if (config.NODE_ENV !== "production") return;
+  const requirePort = options?.requirePort ?? true;
+
+  const required: Array<keyof typeof config> = [
+    "NODE_ENV",
+    "SUPABASE_URL",
+    "SUPABASE_SERVICE_ROLE_KEY",
+    "OPENAI_API_KEY",
+    "SLACK_BOT_TOKEN",
+    "SLACK_APP_TOKEN",
+    "SLACK_SIGNING_SECRET",
+    "NETSUITE_ACCOUNT_ID",
+    "NETSUITE_CONSUMER_KEY",
+    "NETSUITE_CONSUMER_SECRET",
+    "NETSUITE_TOKEN_ID",
+    "NETSUITE_TOKEN_SECRET",
+    "NETSUITE_QUOTE_TO_SO_RESTLET_URL",
+    "NETSUITE_LIVE_QUOTE_TO_SO_ENABLED"
+  ];
+  if (requirePort) required.unshift("PORT");
+
+  const missing = required.filter((key) => {
+    const value = config[key];
+    if (typeof value === "number") return !Number.isFinite(value);
+    return !value;
+  });
+
+  if (missing.length > 0) {
+    throw new Error(`Missing required production env vars: ${missing.join(", ")}`);
+  }
+}
