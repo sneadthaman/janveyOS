@@ -8,61 +8,16 @@ import {
   markActionAttemptFailed,
   markActionExecuted
 } from "../repositories/agent-worker-repository.js";
-import { runQuoteToSoDryRunHandler } from "./actions/quote-to-so-execution-handler.js";
 import { notifyQuoteToSoCompleted } from "./slack/quote-to-so-notifier.js";
-
-function normalizeActionType(actionType: string) {
-  if (["quote_to_so", "quote_to_so_preview", "quote_to_sales_order", "estimate_to_sales_order"].includes(actionType)) {
-    return "quote_to_so";
-  }
-  return actionType;
-}
+import { dispatchActionExecution } from "../actions/action-dispatcher.js";
+import { normalizeActionType } from "../actions/shared/action-types.js";
 
 export async function executeAction(actionType: string, input: Record<string, unknown>, actionRequestId?: string) {
-  const normalized = normalizeActionType(actionType);
-  const enrichedInput =
-    actionRequestId && !input.agent_action_request_id
-      ? { ...input, agent_action_request_id: actionRequestId }
-      : input;
-
-  if (normalized === "quote_to_so") {
-    const result = await runQuoteToSoDryRunHandler(enrichedInput);
-    return {
-      handler: "quote_to_so_execute",
-      result
-    };
-  }
-
-  if (enrichedInput.force_fail === true) {
-    throw new Error("Forced mock failure requested.");
-  }
-
-  if (normalized === "new_item_draft") {
-    return {
-      handler: "mock_new_item_draft",
-      result: {
-        message: "Mock new-item draft execution complete.",
-        vendor: enrichedInput.vendor ?? null,
-        vendor_sku: enrichedInput.vendor_sku ?? null,
-        netsuite_mutation: "not_implemented"
-      }
-    };
-  }
-
-  if (normalized === "pricing_update") {
-    return {
-      handler: "mock_pricing_update",
-      result: {
-        message: "Mock pricing update execution complete.",
-        sku: enrichedInput.sku ?? null,
-        customer: enrichedInput.customer ?? null,
-        new_price: enrichedInput.new_price ?? null,
-        netsuite_mutation: "not_implemented"
-      }
-    };
-  }
-
-  throw new Error(`No mock handler found for action_type=${actionType}`);
+  return dispatchActionExecution({
+    actionType,
+    actionRequestId,
+    payload: input
+  });
 }
 
 export async function executeClaimedActionRequest(

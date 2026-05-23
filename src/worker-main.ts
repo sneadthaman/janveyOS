@@ -9,7 +9,7 @@ async function bootstrapWorker() {
   const worker = startActionExecutionWorker(workerIntervalMs);
 
   logger.info("Worker process started", {
-    workerName: "action-execution-worker",
+    workerName: "janveyos-worker",
     intervalMs: workerIntervalMs,
     netsuiteLiveQuoteToSoEnv: isRawEnvSet("NETSUITE_LIVE_QUOTE_TO_SO_ENABLED") ? "set" : "missing",
     liveQuoteToSoEnabled: config.NETSUITE_LIVE_QUOTE_TO_SO_ENABLED,

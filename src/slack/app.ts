@@ -4,6 +4,8 @@ import { config } from "../shared/config.js";
 import { logger } from "../shared/logger.js";
 import { handleQuoteToSoButtonAction, handleQuoteToSoSlackMessage } from "../domain/services/slack/quote-to-so-conversation.js";
 import { handleQuoteToSoApprovalAction } from "../domain/services/slack/quote-to-so-approval.js";
+import { handleEtaSlackQuery } from "../domain/services/slack/eta-query-conversation.js";
+import { handleEtaSlackCapture } from "../domain/services/slack/eta-capture-conversation.js";
 
 type SlashTool =
   | "item_lookup"
@@ -113,6 +115,24 @@ export function createSlackApp() {
     if (/^<@[^>]+>/.test(message.text.trim())) return;
 
     try {
+      const etaCaptureHandled = await handleEtaSlackCapture({
+        text: message.text,
+        slackChannelId: message.channel,
+        slackMessageTs: typeof message.ts === "string" ? message.ts : undefined,
+        reply: async (out) => {
+          await say(out);
+        }
+      });
+      if (etaCaptureHandled) return;
+
+      const etaHandled = await handleEtaSlackQuery({
+        text: message.text,
+        reply: async (out) => {
+          await say(out);
+        }
+      });
+      if (etaHandled) return;
+
       const handled = await handleQuoteToSoSlackMessage({
         slackUserId: message.user,
         channelId: message.channel,
@@ -151,6 +171,24 @@ export function createSlackApp() {
       const rawText = (event.text ?? "").trim();
       const cleanedText = rawText.replace(/^<@[^>]+>\s*/, "").trim();
       console.log("[slack] app_mention cleaned text", { cleanedText });
+
+      const etaCaptureHandled = await handleEtaSlackCapture({
+        text: cleanedText,
+        slackChannelId: event.channel,
+        slackMessageTs: event.ts,
+        reply: async (out) => {
+          await say(out);
+        }
+      });
+      if (etaCaptureHandled) return;
+
+      const etaHandled = await handleEtaSlackQuery({
+        text: cleanedText,
+        reply: async (out) => {
+          await say(out);
+        }
+      });
+      if (etaHandled) return;
 
       const handled = await handleQuoteToSoSlackMessage({
         slackUserId: event.user,

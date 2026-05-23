@@ -84,7 +84,7 @@ function registerProcessLevelHandlers() {
 async function bootstrapApi() {
   assertProductionEnv();
   registerProcessLevelHandlers();
-  logger.info("Quote-to-SO live flag startup state", {
+  logger.info("JanveyOS startup live flag state", {
     netsuiteLiveQuoteToSoEnv: isRawEnvSet("NETSUITE_LIVE_QUOTE_TO_SO_ENABLED") ? "set" : "missing",
     liveQuoteToSoEnabled: config.NETSUITE_LIVE_QUOTE_TO_SO_ENABLED,
     env: config.NODE_ENV

@@ -6,7 +6,7 @@ export const healthRouter = Router();
 healthRouter.get("/", (_req, res) => {
   res.json({
     status: "ok",
-    service: "quote-to-so-api",
+    service: "janveyos-api",
     timestamp: new Date().toISOString(),
     env: config.NODE_ENV
   });

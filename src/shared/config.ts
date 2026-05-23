@@ -39,6 +39,7 @@ const schema = z.object({
   NETSUITE_QUOTE_LOOKUP_RESTLET_URL: optionalEnvString,
   NETSUITE_QUOTE_TO_SO_RESTLET_URL: optionalEnvString,
   NETSUITE_SALES_ORDER_LOOKUP_RESTLET_URL: optionalEnvString,
+  NETSUITE_OPEN_PO_LOOKUP_RESTLET_URL: optionalEnvString,
   NETSUITE_ACCOUNT_ID: optionalEnvString,
   NETSUITE_ACCOUNT_BASE_URL: optionalEnvString,
   NETSUITE_CONSUMER_KEY: optionalEnvString,

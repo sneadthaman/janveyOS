@@ -81,6 +81,31 @@ export type SalesOrderVerificationResult =
       safeMessage?: string;
     };
 
+export interface OpenPurchaseOrderLookupLine {
+  lineId?: string;
+  lineUniqueKey?: string;
+  itemInternalId?: string;
+  itemNumber?: string;
+  description?: string;
+  quantity?: number;
+  quantityReceived?: number;
+  quantityRemaining?: number;
+  expectedReceiptDate?: string;
+  isClosed?: boolean;
+}
+
+export interface OpenPurchaseOrderLookupResult {
+  success: boolean;
+  poInternalId?: string;
+  tranId?: string;
+  vendorName?: string;
+  status?: string;
+  lines: OpenPurchaseOrderLookupLine[];
+  code?: string;
+  message?: string;
+  details?: unknown;
+}
+
 export class NetSuiteRestletError extends Error {
   code?: string;
   details?: unknown;
@@ -536,5 +561,175 @@ export async function getSalesOrderByInternalId(internalId: string): Promise<Sal
     return classifySalesOrderLookupFailure({ internalId, httpStatus: response.status, parsedBody: raw });
   } catch (error) {
     return classifySalesOrderLookupFailure({ internalId, fetchError: error });
+  }
+}
+
+function asNumber(value: unknown): number | undefined {
+  if (typeof value === "number" && Number.isFinite(value)) return value;
+  if (typeof value === "string") {
+    const n = Number(value);
+    if (Number.isFinite(n)) return n;
+  }
+  return undefined;
+}
+
+function asBoolean(value: unknown): boolean | undefined {
+  if (typeof value === "boolean") return value;
+  if (typeof value === "string") {
+    const normalized = value.trim().toLowerCase();
+    if (normalized === "true" || normalized === "t" || normalized === "1" || normalized === "yes") return true;
+    if (normalized === "false" || normalized === "f" || normalized === "0" || normalized === "no") return false;
+  }
+  return undefined;
+}
+
+function normalizeOpenPoLookupResponse(raw: Record<string, unknown>): OpenPurchaseOrderLookupResult {
+  const linesRaw = Array.isArray(raw.lines)
+    ? raw.lines
+    : Array.isArray(raw.items)
+      ? raw.items
+      : Array.isArray(raw.po_lines)
+        ? raw.po_lines
+        : [];
+  const lines = linesRaw
+    .filter((line): line is Record<string, unknown> => Boolean(line && typeof line === "object" && !Array.isArray(line)))
+    .map((line) => ({
+      lineId:
+        typeof line.lineId === "string"
+          ? line.lineId
+          : typeof line.line_id === "string"
+            ? line.line_id
+            : typeof line.line === "string"
+              ? line.line
+              : undefined,
+      lineUniqueKey:
+        typeof line.lineUniqueKey === "string"
+          ? line.lineUniqueKey
+          : typeof line.lineuniquekey === "string"
+            ? line.lineuniquekey
+            : undefined,
+      itemInternalId:
+        typeof line.itemInternalId === "string"
+          ? line.itemInternalId
+          : typeof line.item_internal_id === "string"
+            ? line.item_internal_id
+            : undefined,
+      itemNumber:
+        typeof line.itemNumber === "string"
+          ? line.itemNumber
+          : typeof line.item_number === "string"
+            ? line.item_number
+            : typeof line.item === "string"
+              ? line.item
+              : undefined,
+      description: typeof line.description === "string" ? line.description : undefined,
+      quantity: asNumber(line.quantity),
+      quantityReceived: asNumber(line.quantityReceived ?? line.quantity_received),
+      quantityRemaining: asNumber(line.quantityRemaining ?? line.quantity_remaining),
+      expectedReceiptDate:
+        typeof line.expectedReceiptDate === "string"
+          ? line.expectedReceiptDate
+          : typeof line.expected_receipt_date === "string"
+            ? line.expected_receipt_date
+            : undefined,
+      isClosed: asBoolean(line.isClosed ?? line.is_closed)
+    }));
+
+  return {
+    success: raw.success === true,
+    poInternalId:
+      typeof raw.poInternalId === "string"
+        ? raw.poInternalId
+        : typeof raw.po_internal_id === "string"
+          ? raw.po_internal_id
+          : undefined,
+    tranId:
+      typeof raw.tranId === "string"
+        ? raw.tranId
+        : typeof raw.tranid === "string"
+          ? raw.tranid
+          : typeof raw.poNumber === "string"
+            ? raw.poNumber
+            : typeof raw.po_number === "string"
+              ? raw.po_number
+              : undefined,
+    vendorName:
+      typeof raw.vendorName === "string"
+        ? raw.vendorName
+        : typeof raw.vendor_name === "string"
+          ? raw.vendor_name
+          : undefined,
+    status: typeof raw.status === "string" ? raw.status : undefined,
+    lines,
+    code: typeof raw.code === "string" ? raw.code : undefined,
+    message: typeof raw.message === "string" ? raw.message : undefined,
+    details: raw.details
+  };
+}
+
+export async function lookupOpenPurchaseOrder(input: { poNumber: string }): Promise<OpenPurchaseOrderLookupResult> {
+  const poNumber = input.poNumber.trim();
+  if (!config.NETSUITE_OPEN_PO_LOOKUP_RESTLET_URL) {
+    return {
+      success: false,
+      code: "CONFIG_ERROR",
+      message: "NETSUITE_OPEN_PO_LOOKUP_RESTLET_URL is not configured.",
+      lines: []
+    };
+  }
+
+  const headers: Record<string, string> = {
+    "content-type": "application/json",
+    accept: "application/json"
+  };
+  const authHeader = buildNetSuiteAuthorizationHeader(config.NETSUITE_OPEN_PO_LOOKUP_RESTLET_URL);
+  if (authHeader) headers.authorization = authHeader;
+
+  console.log("[netsuite] lookupOpenPurchaseOrder start", {
+    hasLookupUrl: Boolean(config.NETSUITE_OPEN_PO_LOOKUP_RESTLET_URL),
+    hasAuthHeader: Boolean(headers.authorization),
+    poNumber
+  });
+
+  try {
+    const response = await fetch(config.NETSUITE_OPEN_PO_LOOKUP_RESTLET_URL, {
+      method: "POST",
+      headers,
+      body: JSON.stringify({ po_number: poNumber })
+    });
+
+    console.log("[netsuite] lookupOpenPurchaseOrder response status", { status: response.status });
+    const responseText = await response.text();
+    console.log("[netsuite] lookupOpenPurchaseOrder raw response text", responseText);
+    const raw = parseJsonObject(responseText);
+    console.log("[netsuite] lookupOpenPurchaseOrder parsed JSON", raw);
+    const normalized = normalizeOpenPoLookupResponse(raw);
+    console.log("[netsuite] lookupOpenPurchaseOrder normalized result", {
+      success: normalized.success,
+      poInternalId: normalized.poInternalId,
+      tranId: normalized.tranId,
+      status: normalized.status,
+      lineCount: normalized.lines.length,
+      code: normalized.code
+    });
+
+    if (!response.ok) {
+      return {
+        ...normalized,
+        success: false,
+        code: normalized.code ?? `HTTP_${response.status}`,
+        message: normalized.message ?? `Open PO lookup failed (${response.status})`
+      };
+    }
+
+    return normalized;
+  } catch (error) {
+    const err = error as Error;
+    return {
+      success: false,
+      code: "LOOKUP_ERROR",
+      message: err?.message ?? "Unknown error while looking up open PO.",
+      lines: []
+    };
   }
 }

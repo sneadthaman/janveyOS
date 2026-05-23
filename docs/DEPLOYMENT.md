@@ -1,6 +1,6 @@
-# Quote-to-SO Deployment Guide
+# JanveyOS Deployment Guide
 
-This guide covers production deployment for the internal Janvey beta.
+This guide covers production deployment for the internal Janvey beta (JanveyOS/UROS action framework).
 
 ## Architecture
 
@@ -16,6 +16,14 @@ Run **two processes**:
 - does **not** listen on a port
 - uses same Supabase database as API
 
+Current supported action types:
+- `quote_to_so`
+
+Future action placeholders:
+- `eta_update`
+- `new_item_draft`
+- `po_ack`
+
 ## Supabase Setup
 
 1. Create/confirm production Supabase project.
@@ -28,7 +36,7 @@ Run **two processes**:
 
 Apply SQL migrations in `supabase/migrations/` to production.
 
-Required for quote-to-so status model:
+Required for JanveyOS action-request status model:
 - `supabase/migrations/20260523014000_phase3g_agent_action_request_status_cleanup.sql`
 
 ## Required Environment Variables
@@ -126,16 +134,16 @@ Notes:
 
 Deploy with two Railway services from the same GitHub repo:
 
-1. `quote-to-so-api`
-2. `quote-to-so-worker`
+1. `janveyos-api`
+2. `janveyos-worker`
 
 ### Setup Steps
 
 1. Connect this GitHub repo to Railway.
-2. Create service: `quote-to-so-api`
+2. Create service: `janveyos-api`
    - Build command: `npm run build`
    - Start command: `npm run start:api`
-3. Create service: `quote-to-so-worker`
+3. Create service: `janveyos-worker`
    - Build command: `npm run build`
    - Start command: `npm run start:worker`
 4. Set `NODE_ENV=production` on both services.
