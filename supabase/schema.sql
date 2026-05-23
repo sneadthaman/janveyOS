@@ -279,7 +279,7 @@ create table if not exists agent_action_requests (
   input_json jsonb not null default '{}'::jsonb,
   preview_json jsonb,
   output_json jsonb,
-  status text not null default 'pending' check (status in ('pending', 'approved', 'rejected', 'executed', 'failed')),
+  status text not null default 'pending' check (status in ('pending', 'approved', 'running', 'rejected', 'cancelled', 'executed', 'failed')),
   approved_by text,
   approved_at timestamptz,
   executed_at timestamptz,
@@ -313,3 +313,30 @@ create table if not exists agent_action_execution_logs (
   latency_ms integer,
   created_at timestamptz not null default now()
 );
+
+create table if not exists quote_to_so_executions (
+  id uuid primary key default gen_random_uuid(),
+  quote_internal_id text not null,
+  approval_request_id uuid,
+  idempotency_key text not null unique,
+  status text not null check (
+    status in (
+      'pending',
+      'running',
+      'completed',
+      'failed',
+      'cancelled'
+    )
+  ),
+  sales_order_internal_id text,
+  sales_order_tran_id text,
+  error_code text,
+  error_message text,
+  started_at timestamptz,
+  completed_at timestamptz,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
+create index if not exists idx_quote_to_so_executions_quote_internal_id
+on quote_to_so_executions (quote_internal_id);

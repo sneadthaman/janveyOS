@@ -190,6 +190,13 @@ Notes:
 - Slack does not execute NetSuite transform directly.
 - Slack only creates `quote_to_so` action requests (`requires_approval=true`).
 - Conversation state is in-memory for MVP and does not survive server restarts.
+- Slack approval buttons are supported for `quote_to_so` requests:
+  - `Approve / Create Sales Order`
+  - `Reject`
+  - `Cancel`
+- Optional approver allowlist:
+  - `QUOTE_TO_SO_APPROVER_SLACK_USER_IDS=U123,U456`
+  - If unset, approval behavior falls back to existing local/dev behavior (no Slack-user restriction).
 
 ## Live Quote -> SO Settings
 
@@ -198,6 +205,7 @@ To enable live NetSuite transform execution (post-approval only):
 - `NETSUITE_EXECUTION_MODE=live`
 - `NETSUITE_LIVE_QUOTE_TO_SO_ENABLED=true`
 - `NETSUITE_QUOTE_TO_SO_RESTLET_URL=<your quote->so RESTlet URL>`
+- `NETSUITE_SALES_ORDER_LOOKUP_RESTLET_URL=<your sales-order lookup RESTlet URL>`
 - NetSuite OAuth/TBA credentials:
   - `NETSUITE_ACCOUNT_ID`
   - `NETSUITE_CONSUMER_KEY`
@@ -206,6 +214,132 @@ To enable live NetSuite transform execution (post-approval only):
   - `NETSUITE_TOKEN_SECRET`
 
 Slack still does not execute NetSuite directly. Slack only creates an approval-gated action request that the worker executes after manager approval.
+
+## Quote-to-SO Production Readiness Checklist
+
+Before controlled live rollout:
+
+- Apply required migration:
+  - `supabase/migrations/20260523014000_phase3g_agent_action_request_status_cleanup.sql`
+- Configure required env vars:
+  - `NETSUITE_EXECUTION_MODE=live`
+  - `NETSUITE_LIVE_QUOTE_TO_SO_ENABLED=true`
+  - `NETSUITE_QUOTE_TO_SO_RESTLET_URL=...`
+  - `NETSUITE_SALES_ORDER_LOOKUP_RESTLET_URL=...`
+  - `NETSUITE_ACCOUNT_ID=...`
+  - `NETSUITE_CONSUMER_KEY=...`
+  - `NETSUITE_CONSUMER_SECRET=...`
+  - `NETSUITE_TOKEN_ID=...`
+  - `NETSUITE_TOKEN_SECRET=...`
+- Optional but recommended for Slack SO links:
+  - `NETSUITE_ACCOUNT_BASE_URL=https://<account>.app.netsuite.com`
+- Slack approver allowlist:
+  - `QUOTE_TO_SO_APPROVER_SLACK_USER_IDS=U123,U456`
+- Confirm worker is enabled:
+  - `EXECUTION_WORKER_ENABLED=true`
+
+Recommended first live test:
+1. Reset one safe test quote workflow (`npm run dev:reset-quote-to-so -- EST7883` in non-prod only).
+2. Submit from Slack, capture PO/no-PO, approve with an authorized approver.
+3. Verify transitions: `pending -> approved -> running -> executed`.
+4. Confirm one Sales Order is created and Slack posts success with SO details.
+5. Re-click stale approval button; verify no duplicate execution.
+
+Safety notes:
+- Idempotency and stale-button protections prevent duplicate Quote->SO transforms.
+- Unauthorized approvers are blocked with ephemeral Slack responses.
+
+Dev-only local reset helper (never use in production):
+
+```bash
+npm run dev:reset-quote-to-so -- EST7883
+```
+
+## Phase 3B Manual E2E Validation (Idempotency)
+
+Apply migration first (run in Supabase SQL editor):
+
+```sql
+select *
+from quote_to_so_executions
+order by created_at desc
+limit 10;
+```
+
+If the table does not exist, apply the latest `supabase/schema.sql` changes, then re-run the query.
+
+Live test prerequisites:
+- `NETSUITE_EXECUTION_MODE=live`
+- `NETSUITE_LIVE_QUOTE_TO_SO_ENABLED=true`
+- `NETSUITE_QUOTE_TO_SO_RESTLET_URL=<...>`
+- valid NetSuite OAuth env vars
+
+Expected user-result states surfaced by execution output:
+- `started`
+- `already_running`
+- `already_completed`
+- `completed`
+- `failed`
+
+SQL inspection queries during tests:
+
+```sql
+select
+  id,
+  quote_internal_id,
+  idempotency_key,
+  status,
+  sales_order_internal_id,
+  sales_order_tran_id,
+  error_code,
+  error_message,
+  started_at,
+  completed_at,
+  created_at,
+  updated_at
+from quote_to_so_executions
+order by created_at desc
+limit 20;
+```
+
+```sql
+select
+  idempotency_key,
+  count(*)
+from quote_to_so_executions
+group by idempotency_key
+having count(*) > 1;
+```
+
+Expected duplicate check result:
+- zero rows
+
+Manual tests:
+1. First Approval
+- Trigger Slack quote conversion and approve once.
+- Expect one `quote_to_so_executions` row, status transitions `running -> completed`.
+- Expect one NetSuite Sales Order.
+
+2. Duplicate Approval After Completion
+- Re-run for same quote.
+- Expect no new NetSuite SO and no second execution row.
+- Expect `already_completed` result with existing SO IDs.
+
+3. Duplicate While Running
+- Simulate:
+```sql
+update quote_to_so_executions
+set status = 'running'
+where quote_internal_id = '<QUOTE_INTERNAL_ID>';
+```
+- Approve again.
+- Expect `already_running` and no NetSuite transform call.
+
+4. Failed Then Retry
+- Force controlled failure (dev only), e.g. invalid transform RESTlet URL.
+- Expect `failed` status with safe `error_message`.
+- Restore config and retry.
+- Expect same idempotency row reused and final `completed` state.
 
 ## OpenClaw Routing
 

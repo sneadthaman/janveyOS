@@ -1,4 +1,8 @@
 import { supabaseAdminClient } from "../../integrations/supabase/client.js";
+import { canExecuteActionRequest } from "../services/actions/action-request-status.js";
+
+const actionRequestSelect =
+  "id,created_at,requested_by,source,action_type,requires_approval,approval_status_target,status,input_json,preview_json,output_json,approved_by,approved_at,executed_at,claimed_by,claimed_at,retry_count,last_attempted_at,error_message";
 
 export async function listAgentToolCalls() {
   if (!supabaseAdminClient) throw new Error("Supabase is required.");
@@ -15,13 +19,22 @@ export async function listAgentActionRequests() {
   if (!supabaseAdminClient) throw new Error("Supabase is required.");
   const { data, error } = await supabaseAdminClient
     .from("agent_action_requests")
-    .select(
-      "id,created_at,requested_by,source,action_type,requires_approval,approval_status_target,status,input_json,preview_json,output_json,approved_by,approved_at,executed_at,claimed_by,claimed_at,retry_count,last_attempted_at,error_message"
-    )
+    .select(actionRequestSelect)
     .order("created_at", { ascending: false })
     .limit(200);
   if (error) throw new Error(`Failed to list agent action requests: ${error.message}`);
   return data ?? [];
+}
+
+export async function getAgentActionRequestById(id: string) {
+  if (!supabaseAdminClient) throw new Error("Supabase is required.");
+  const { data, error } = await supabaseAdminClient
+    .from("agent_action_requests")
+    .select(actionRequestSelect)
+    .eq("id", id)
+    .maybeSingle();
+  if (error) throw new Error(`Failed to load action request: ${error.message}`);
+  return data;
 }
 
 export async function approveAgentActionRequest(id: string, approvedBy: string) {
@@ -35,7 +48,9 @@ export async function approveAgentActionRequest(id: string, approvedBy: string) 
 
   if (findError) throw new Error(`Failed to load action request: ${findError.message}`);
   if (!existing) throw new Error("Action request not found.");
-  if (existing.status !== "pending") throw new Error(`Only pending requests can be approved. Current status: ${existing.status}`);
+  if (!canExecuteActionRequest(existing.status)) {
+    throw new Error(`Only pending requests can be approved. Current status: ${existing.status}`);
+  }
 
   const now = new Date().toISOString();
   const { data, error } = await supabaseAdminClient
@@ -47,9 +62,7 @@ export async function approveAgentActionRequest(id: string, approvedBy: string) 
       updated_at: now
     })
     .eq("id", id)
-    .select(
-      "id,created_at,requested_by,source,action_type,requires_approval,approval_status_target,status,input_json,preview_json,output_json,approved_by,approved_at,executed_at,claimed_by,claimed_at,retry_count,last_attempted_at,error_message"
-    )
+    .select(actionRequestSelect)
     .single();
 
   if (error) throw new Error(`Failed to approve action request: ${error.message}`);
@@ -67,7 +80,9 @@ export async function rejectAgentActionRequest(id: string) {
 
   if (findError) throw new Error(`Failed to load action request: ${findError.message}`);
   if (!existing) throw new Error("Action request not found.");
-  if (existing.status !== "pending") throw new Error(`Only pending requests can be rejected. Current status: ${existing.status}`);
+  if (!canExecuteActionRequest(existing.status)) {
+    throw new Error(`Only pending requests can be rejected. Current status: ${existing.status}`);
+  }
 
   const now = new Date().toISOString();
   const { data, error } = await supabaseAdminClient
@@ -77,12 +92,40 @@ export async function rejectAgentActionRequest(id: string) {
       updated_at: now
     })
     .eq("id", id)
-    .select(
-      "id,created_at,requested_by,source,action_type,requires_approval,approval_status_target,status,input_json,preview_json,output_json,approved_by,approved_at,executed_at,claimed_by,claimed_at,retry_count,last_attempted_at,error_message"
-    )
+    .select(actionRequestSelect)
     .single();
 
   if (error) throw new Error(`Failed to reject action request: ${error.message}`);
+  return data;
+}
+
+export async function cancelAgentActionRequest(id: string) {
+  if (!supabaseAdminClient) throw new Error("Supabase is required.");
+
+  const { data: existing, error: findError } = await supabaseAdminClient
+    .from("agent_action_requests")
+    .select("id,status")
+    .eq("id", id)
+    .maybeSingle();
+
+  if (findError) throw new Error(`Failed to load action request: ${findError.message}`);
+  if (!existing) throw new Error("Action request not found.");
+  if (!canExecuteActionRequest(existing.status)) {
+    throw new Error(`Only pending requests can be cancelled. Current status: ${existing.status}`);
+  }
+
+  const now = new Date().toISOString();
+  const { data, error } = await supabaseAdminClient
+    .from("agent_action_requests")
+    .update({
+      status: "cancelled",
+      updated_at: now
+    })
+    .eq("id", id)
+    .select(actionRequestSelect)
+    .single();
+
+  if (error) throw new Error(`Failed to cancel action request: ${error.message}`);
   return data;
 }
 

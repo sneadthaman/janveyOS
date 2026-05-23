@@ -10,8 +10,10 @@ import type { AgentActionExecutionLog, AgentActionRequest } from "../types";
 function statusLabel(row: AgentActionRequest) {
   if (row.status === "executed") return "Executed";
   if (row.status === "failed") return "Failed";
+  if (row.status === "running") return "Running";
   if (row.status === "approved" && row.claimed_at) return "In Progress";
   if (row.status === "approved") return "Approved (Queued)";
+  if (row.status === "cancelled") return "Cancelled";
   if (row.status === "rejected") return "Rejected";
   return "Pending Approval";
 }

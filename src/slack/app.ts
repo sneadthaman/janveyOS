@@ -1,7 +1,9 @@
 import { App } from "@slack/bolt";
+import type { KnownBlock } from "@slack/types";
 import { config } from "../shared/config.js";
 import { logger } from "../shared/logger.js";
-import { handleQuoteToSoSlackMessage } from "../domain/services/slack/quote-to-so-conversation.js";
+import { handleQuoteToSoButtonAction, handleQuoteToSoSlackMessage } from "../domain/services/slack/quote-to-so-conversation.js";
+import { handleQuoteToSoApprovalAction } from "../domain/services/slack/quote-to-so-approval.js";
 
 type SlashTool =
   | "item_lookup"
@@ -108,14 +110,21 @@ export function createSlackApp() {
   app.message(async ({ message, say }) => {
     if (!("text" in message) || !message.text) return;
     if (message.subtype) return;
+    if (/^<@[^>]+>/.test(message.text.trim())) return;
 
     try {
       const handled = await handleQuoteToSoSlackMessage({
         slackUserId: message.user,
         channelId: message.channel,
+        threadTs: "thread_ts" in message && typeof message.thread_ts === "string" ? message.thread_ts : undefined,
+        messageTs: typeof message.ts === "string" ? message.ts : undefined,
         text: message.text,
-        reply: async (text) => {
-          await say(text);
+        reply: async (out) => {
+          if (typeof out === "string") {
+            await say(out);
+            return;
+          }
+          await say({ text: out.text, ...(out.blocks ? { blocks: out.blocks as unknown as KnownBlock[] } : {}) });
         }
       });
       if (handled) return;
@@ -146,23 +155,137 @@ export function createSlackApp() {
       const handled = await handleQuoteToSoSlackMessage({
         slackUserId: event.user,
         channelId: event.channel,
+        threadTs: undefined,
+        messageTs: event.ts,
         text: cleanedText,
-        reply: async (text) => {
-          await say({
-            text,
-            thread_ts: event.ts
-          });
+        reply: async (out) => {
+          if (typeof out === "string") {
+            await say(out);
+            return;
+          }
+          await say({ text: out.text, ...(out.blocks ? { blocks: out.blocks as unknown as KnownBlock[] } : {}) });
         }
       });
 
       console.log("[slack] app_mention quote_to_so intent matched", { matched: handled });
     } catch (error) {
       logger.error("Slack app_mention quote conversion flow failed", error);
-      await say({
-        text: "I hit an error while preparing quote conversion. Please try again.",
-        thread_ts: event.ts
-      });
+      await say("I hit an error while preparing quote conversion. Please try again.");
     }
+  });
+
+  app.action("quote_to_so_add_po", async ({ ack, body, say, action }) => {
+    await ack();
+    if (!("user" in body) || !("channel" in body) || !say) return;
+    const actionValue = "value" in action && typeof action.value === "string" ? action.value : "";
+    await handleQuoteToSoButtonAction({
+      actionId: "quote_to_so_add_po",
+      value: actionValue,
+      slackUserId: body.user.id,
+      slackChannelId: body.channel?.id ?? "",
+      slackMessageTs: "message" in body && typeof body.message?.ts === "string" ? body.message.ts : undefined,
+      reply: async (out) => {
+        if (typeof out === "string") {
+          await say(out);
+          return;
+        }
+        await say({ text: out.text, ...(out.blocks ? { blocks: out.blocks as unknown as KnownBlock[] } : {}) });
+      }
+    });
+  });
+
+  app.action("quote_to_so_no_po", async ({ ack, body, say, action }) => {
+    await ack();
+    if (!("user" in body) || !("channel" in body) || !say) return;
+    const actionValue = "value" in action && typeof action.value === "string" ? action.value : "";
+    await handleQuoteToSoButtonAction({
+      actionId: "quote_to_so_no_po",
+      value: actionValue,
+      slackUserId: body.user.id,
+      slackChannelId: body.channel?.id ?? "",
+      slackMessageTs: "message" in body && typeof body.message?.ts === "string" ? body.message.ts : undefined,
+      reply: async (out) => {
+        if (typeof out === "string") {
+          await say(out);
+          return;
+        }
+        await say({ text: out.text, ...(out.blocks ? { blocks: out.blocks as unknown as KnownBlock[] } : {}) });
+      }
+    });
+  });
+
+  app.action("quote_to_so_cancel", async ({ ack, body, say, action }) => {
+    await ack();
+    if (!("user" in body) || !("channel" in body) || !say) return;
+    const actionValue = "value" in action && typeof action.value === "string" ? action.value : "";
+    await handleQuoteToSoButtonAction({
+      actionId: "quote_to_so_cancel",
+      value: actionValue,
+      slackUserId: body.user.id,
+      slackChannelId: body.channel?.id ?? "",
+      slackMessageTs: "message" in body && typeof body.message?.ts === "string" ? body.message.ts : undefined,
+      reply: async (out) => {
+        if (typeof out === "string") {
+          await say(out);
+          return;
+        }
+        await say({ text: out.text, ...(out.blocks ? { blocks: out.blocks as unknown as KnownBlock[] } : {}) });
+      }
+    });
+  });
+
+  app.action("quote_to_so_approve_request", async ({ ack, action, body, respond, say }) => {
+    await ack();
+    if (!("user" in body)) return;
+    const actionValue = "value" in action && typeof action.value === "string" ? action.value : "";
+    const result = await handleQuoteToSoApprovalAction({
+      actionId: "quote_to_so_approve_request",
+      value: actionValue,
+      actorSlackUserId: body.user.id,
+      slackChannelId: "channel" in body && body.channel?.id ? body.channel.id : undefined,
+      slackMessageTs: "message" in body && typeof body.message?.ts === "string" ? body.message.ts : undefined
+    });
+    if (result.kind === "unauthorized") {
+      if (respond) await respond({ response_type: "ephemeral", text: result.message });
+      return;
+    }
+    if (say) await say(result.message);
+  });
+
+  app.action("quote_to_so_reject_request", async ({ ack, action, body, respond, say }) => {
+    await ack();
+    if (!("user" in body)) return;
+    const actionValue = "value" in action && typeof action.value === "string" ? action.value : "";
+    const result = await handleQuoteToSoApprovalAction({
+      actionId: "quote_to_so_reject_request",
+      value: actionValue,
+      actorSlackUserId: body.user.id,
+      slackChannelId: "channel" in body && body.channel?.id ? body.channel.id : undefined,
+      slackMessageTs: "message" in body && typeof body.message?.ts === "string" ? body.message.ts : undefined
+    });
+    if (result.kind === "unauthorized") {
+      if (respond) await respond({ response_type: "ephemeral", text: result.message });
+      return;
+    }
+    if (say) await say(result.message);
+  });
+
+  app.action("quote_to_so_cancel_request", async ({ ack, action, body, respond, say }) => {
+    await ack();
+    if (!("user" in body)) return;
+    const actionValue = "value" in action && typeof action.value === "string" ? action.value : "";
+    const result = await handleQuoteToSoApprovalAction({
+      actionId: "quote_to_so_cancel_request",
+      value: actionValue,
+      actorSlackUserId: body.user.id,
+      slackChannelId: "channel" in body && body.channel?.id ? body.channel.id : undefined,
+      slackMessageTs: "message" in body && typeof body.message?.ts === "string" ? body.message.ts : undefined
+    });
+    if (result.kind === "unauthorized") {
+      if (respond) await respond({ response_type: "ephemeral", text: result.message });
+      return;
+    }
+    if (say) await say(result.message);
   });
 
   return app;

@@ -23,7 +23,8 @@
     "test:tool-pricing-lookup": "tsx scripts/test-tool-pricing-lookup.ts",
     "test:tool-quote-preview": "tsx scripts/test-tool-quote-preview.ts",
     "test:tool-new-item-draft": "tsx scripts/test-tool-new-item-draft.ts",
-    "test:tool-pricing-update-preview": "tsx scripts/test-tool-pricing-update-preview.ts"
+    "test:tool-pricing-update-preview": "tsx scripts/test-tool-pricing-update-preview.ts",
+    "dev:reset-quote-to-so": "tsx scripts/dev-reset-quote-to-so.ts"
   },
   "dependencies": {
     "@slack/bolt": "^3.22.0",

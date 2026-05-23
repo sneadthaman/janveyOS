@@ -27,7 +27,7 @@ export async function claimApprovedActionRequest(id: string, workerId: string) {
   const now = new Date().toISOString();
   const { data, error } = await supabaseAdminClient
     .from("agent_action_requests")
-    .update({ claimed_by: workerId, claimed_at: now, last_attempted_at: now, updated_at: now })
+    .update({ status: "running", claimed_by: workerId, claimed_at: now, last_attempted_at: now, updated_at: now })
     .eq("id", id)
     .eq("status", "approved")
     .is("claimed_at", null)
@@ -85,7 +85,7 @@ export async function markActionExecuted(input: {
       updated_at: now
     })
     .eq("id", input.id)
-    .eq("status", "approved");
+    .eq("status", "running");
   if (error) throw new Error(`Failed to mark action executed: ${error.message}`);
 }
 
@@ -94,6 +94,7 @@ export async function markActionAttemptFailed(input: {
   currentRetryCount: number;
   errorMessage: string;
   forceTerminal?: boolean;
+  outputJson?: Record<string, unknown>;
 }) {
   if (!supabaseAdminClient) throw new Error("Supabase is required.");
   const now = new Date().toISOString();
@@ -106,12 +107,14 @@ export async function markActionAttemptFailed(input: {
       status: terminal ? "failed" : "approved",
       retry_count: nextRetryCount,
       error_message: input.errorMessage,
+      ...(input.outputJson ? { output_json: input.outputJson } : {}),
+      last_attempted_at: now,
       claimed_at: null,
       claimed_by: null,
       updated_at: now
     })
     .eq("id", input.id)
-    .eq("status", "approved");
+    .eq("status", "running");
 
   if (error) throw new Error(`Failed to update failed action attempt: ${error.message}`);
 }

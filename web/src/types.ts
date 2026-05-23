@@ -147,7 +147,7 @@ export interface AgentActionRequest {
   action_type: string;
   requires_approval?: boolean;
   approval_status_target?: string | null;
-  status: "pending" | "approved" | "rejected" | "executed" | "failed";
+  status: "pending" | "approved" | "running" | "rejected" | "cancelled" | "executed" | "failed";
   input_json: Record<string, unknown>;
   preview_json: Record<string, unknown> | null;
   output_json?: Record<string, unknown> | null;

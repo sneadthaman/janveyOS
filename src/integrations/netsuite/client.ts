@@ -61,6 +61,26 @@ export interface QuoteToSalesOrderTransformResult {
   details?: unknown;
 }
 
+export type SalesOrderVerificationResult =
+  | {
+      status: "exists";
+      internalId: string;
+      tranId?: string;
+      nsStatus?: string;
+    }
+  | {
+      status: "missing";
+      internalId: string;
+      errorCode?: string;
+      safeMessage?: string;
+    }
+  | {
+      status: "verification_error";
+      internalId: string;
+      errorCode?: string;
+      safeMessage?: string;
+    };
+
 export class NetSuiteRestletError extends Error {
   code?: string;
   details?: unknown;
@@ -156,6 +176,96 @@ function parseJsonObject(text: string) {
     return {} as Record<string, unknown>;
   }
   return parsed as Record<string, unknown>;
+}
+
+const NETSUITE_MISSING_RECORD_CODES = new Set([
+  "RCRD_DSNT_EXIST",
+  "INVALID_KEY_OR_REF",
+  "SSS_INVALID_INTERNAL_ID",
+  "RECORD_NOT_FOUND"
+]);
+
+function isNetSuiteMissingRecordCode(code: string | undefined) {
+  if (!code) return false;
+  return NETSUITE_MISSING_RECORD_CODES.has(code);
+}
+
+function indicatesMissingRecordFromMessage(message: string | undefined) {
+  if (!message) return false;
+  const lower = message.toLowerCase();
+  return (
+    lower.includes("does not exist") ||
+    lower.includes("not found") ||
+    lower.includes("invalid internal id") ||
+    lower.includes("record was not found")
+  );
+}
+
+function classifySalesOrderLookupFailure(input: {
+  internalId: string;
+  httpStatus?: number;
+  parsedBody?: Record<string, unknown>;
+  parseError?: unknown;
+  fetchError?: unknown;
+}): SalesOrderVerificationResult {
+  if (input.fetchError) {
+    return {
+      status: "verification_error",
+      internalId: input.internalId,
+      errorCode: "LOOKUP_ERROR",
+      safeMessage: input.fetchError instanceof Error ? input.fetchError.message : "Sales order lookup failed before reaching NetSuite."
+    };
+  }
+
+  if (input.parseError) {
+    return {
+      status: "verification_error",
+      internalId: input.internalId,
+      errorCode: "INVALID_JSON",
+      safeMessage: "Sales order lookup returned invalid JSON."
+    };
+  }
+
+  const raw = input.parsedBody ?? {};
+  const nestedError = raw.error && typeof raw.error === "object" ? (raw.error as Record<string, unknown>) : undefined;
+  const topCode = typeof raw.code === "string" ? raw.code : undefined;
+  const nestedCode = typeof nestedError?.code === "string" ? nestedError.code : undefined;
+  const errorCode = topCode ?? nestedCode;
+  const responseMessage = typeof raw.message === "string" ? raw.message : typeof nestedError?.message === "string" ? nestedError.message : undefined;
+
+  if (isNetSuiteMissingRecordCode(errorCode) || indicatesMissingRecordFromMessage(responseMessage)) {
+    return {
+      status: "missing",
+      internalId: input.internalId,
+      errorCode: errorCode ?? "RCRD_DSNT_EXIST",
+      safeMessage: responseMessage ?? "Sales Order not found."
+    };
+  }
+
+  if (input.httpStatus === 401 || input.httpStatus === 403) {
+    return {
+      status: "verification_error",
+      internalId: input.internalId,
+      errorCode: errorCode ?? `HTTP_${input.httpStatus}`,
+      safeMessage: responseMessage ?? "Sales order lookup authentication/authorization failed."
+    };
+  }
+
+  if (input.httpStatus === 404) {
+    return {
+      status: "verification_error",
+      internalId: input.internalId,
+      errorCode: errorCode ?? "HTTP_404",
+      safeMessage: responseMessage ?? "Sales order lookup endpoint not found."
+    };
+  }
+
+  return {
+    status: "verification_error",
+    internalId: input.internalId,
+    errorCode: errorCode ?? (input.httpStatus ? `HTTP_${input.httpStatus}` : "UNKNOWN_ERROR"),
+    safeMessage: responseMessage ?? "Sales order verification returned an unexpected result."
+  };
 }
 
 function normalizeQuoteToSoTransformResponse(raw: Record<string, unknown>): QuoteToSalesOrderTransformResult {
@@ -328,4 +438,103 @@ export async function transformQuoteToSalesOrder(
   }
 
   return normalized;
+}
+
+export async function getSalesOrderByInternalId(internalId: string): Promise<SalesOrderVerificationResult> {
+  if (!config.NETSUITE_SALES_ORDER_LOOKUP_RESTLET_URL) {
+    return {
+      status: "verification_error",
+      internalId,
+      errorCode: "CONFIG_ERROR",
+      safeMessage: "NETSUITE_SALES_ORDER_LOOKUP_RESTLET_URL is not configured."
+    };
+  }
+
+  const headers: Record<string, string> = {
+    "content-type": "application/json",
+    accept: "application/json"
+  };
+  const authHeader = buildNetSuiteAuthorizationHeader(config.NETSUITE_SALES_ORDER_LOOKUP_RESTLET_URL);
+  if (authHeader) headers.authorization = authHeader;
+
+  console.log("[netsuite] getSalesOrderByInternalId start", {
+    hasLookupUrl: Boolean(config.NETSUITE_SALES_ORDER_LOOKUP_RESTLET_URL),
+    hasAuthHeader: Boolean(headers.authorization),
+    internalId
+  });
+
+  try {
+    const response = await fetch(config.NETSUITE_SALES_ORDER_LOOKUP_RESTLET_URL, {
+      method: "POST",
+      headers,
+      body: JSON.stringify({ internalId })
+    });
+
+    console.log("[netsuite] getSalesOrderByInternalId response status", { status: response.status });
+    const responseText = await response.text();
+    console.log("[netsuite] getSalesOrderByInternalId raw response text", responseText);
+
+    let raw: Record<string, unknown>;
+    try {
+      raw = parseJsonObject(responseText);
+    } catch {
+      return classifySalesOrderLookupFailure({ internalId, httpStatus: response.status, parseError: new Error("INVALID_JSON") });
+    }
+
+    console.log("[netsuite] getSalesOrderByInternalId parsed JSON", raw);
+
+    const topCode = typeof raw.code === "string" ? raw.code : undefined;
+    const nestedError = raw.error && typeof raw.error === "object" ? (raw.error as Record<string, unknown>) : undefined;
+    const nestedCode = typeof nestedError?.code === "string" ? nestedError.code : undefined;
+    const errorCode = topCode ?? nestedCode;
+    const success = raw.success;
+    if (!response.ok) return classifySalesOrderLookupFailure({ internalId, httpStatus: response.status, parsedBody: raw });
+    if (errorCode === "INVALID_LOGIN_ATTEMPT" || errorCode === "CONFIG_ERROR" || errorCode === "MISSING_INTERNAL_ID") {
+      return classifySalesOrderLookupFailure({ internalId, httpStatus: response.status, parsedBody: raw });
+    }
+
+    const orderRecord = (raw.salesOrder ?? raw.sales_order ?? raw.order ?? raw.result ?? raw) as Record<string, unknown>;
+    const rawExists = raw.exists;
+    const resolvedInternalId =
+      typeof orderRecord.internalId === "string"
+        ? orderRecord.internalId
+        : typeof orderRecord.internal_id === "string"
+          ? orderRecord.internal_id
+          : typeof raw.id === "string"
+            ? raw.id
+            : typeof raw.internalId === "string"
+              ? raw.internalId
+              : typeof raw.internal_id === "string"
+                ? raw.internal_id
+                : internalId;
+    const resolvedTranId =
+      typeof orderRecord.tranId === "string"
+        ? orderRecord.tranId
+        : typeof orderRecord.tran_id === "string"
+          ? orderRecord.tran_id
+          : typeof raw.tranid === "string"
+            ? raw.tranid
+            : typeof raw.tranId === "string"
+              ? raw.tranId
+              : undefined;
+    const exists = typeof rawExists === "boolean" ? rawExists : Boolean(orderRecord.internalId ?? orderRecord.internal_id ?? raw.id);
+
+    if (success === false && isNetSuiteMissingRecordCode(errorCode)) {
+      return classifySalesOrderLookupFailure({ internalId, httpStatus: response.status, parsedBody: raw });
+    }
+
+    if (exists) {
+      return {
+        status: "exists",
+        internalId: String(resolvedInternalId),
+        tranId: resolvedTranId,
+        nsStatus: typeof orderRecord.status === "string" ? orderRecord.status : undefined
+      };
+    }
+
+    if (success === false) return classifySalesOrderLookupFailure({ internalId, httpStatus: response.status, parsedBody: raw });
+    return classifySalesOrderLookupFailure({ internalId, httpStatus: response.status, parsedBody: raw });
+  } catch (error) {
+    return classifySalesOrderLookupFailure({ internalId, fetchError: error });
+  }
 }
