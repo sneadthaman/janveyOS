@@ -1,6 +1,8 @@
 import { runQuoteToSoDryRunHandler } from "./quote-to-so/quote-to-so-execution-handler.js";
+import { runEtaUpdateExecutionHandler } from "./eta-update/eta-update-execution-handler.js";
 import { actionHandlerName } from "./shared/action-logging.js";
 import {
+  ACTION_TYPE_ETA_UPDATE,
   ACTION_TYPE_NEW_ITEM_DRAFT,
   ACTION_TYPE_QUOTE_TO_SO,
   normalizeActionType
@@ -22,6 +24,14 @@ export async function dispatchActionExecution(input: {
     const result = await runQuoteToSoDryRunHandler(enrichedPayload);
     return {
       handler: "quote_to_so_execute",
+      result
+    };
+  }
+
+  if (normalized === ACTION_TYPE_ETA_UPDATE) {
+    const result = await runEtaUpdateExecutionHandler(enrichedPayload);
+    return {
+      handler: "eta_update_execute",
       result
     };
   }

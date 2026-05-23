@@ -228,3 +228,23 @@ export async function findCompletedQuoteToSoByQuote(input: {
     source: "agent_action_requests"
   };
 }
+
+export async function findLatestEtaUpdateActionRequestByEtaId(etaUpdateId: string) {
+  if (!supabaseAdminClient) throw new Error("Supabase is required for action request logging.");
+  const { data, error } = await supabaseAdminClient
+    .from("agent_action_requests")
+    .select("id,status,input_json,output_json,created_at")
+    .eq("action_type", "eta_update")
+    .order("created_at", { ascending: false })
+    .limit(200);
+
+  if (error) throw new Error(`Failed to fetch eta_update action request rows: ${error.message}`);
+
+  for (const row of data ?? []) {
+    const inputJson = (row.input_json ?? {}) as Record<string, unknown>;
+    const id = String(inputJson.eta_update_id ?? inputJson.etaUpdateId ?? "").trim();
+    if (id && id === etaUpdateId) return row;
+  }
+
+  return null;
+}

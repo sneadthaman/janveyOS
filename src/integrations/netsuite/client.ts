@@ -106,6 +106,26 @@ export interface OpenPurchaseOrderLookupResult {
   details?: unknown;
 }
 
+export interface UpdatePurchaseOrderEtaInput {
+  poInternalId?: string;
+  poNumber?: string;
+  itemInternalId?: string;
+  etaDate: string;
+  updateScope: "po_all_lines" | "po_line";
+  trackingNumber?: string;
+  notes?: string;
+}
+
+export interface UpdatePurchaseOrderEtaResult {
+  success: boolean;
+  code?: string;
+  message?: string;
+  details?: unknown;
+  poInternalId?: string;
+  poNumber?: string;
+  linesUpdated?: number;
+}
+
 export class NetSuiteRestletError extends Error {
   code?: string;
   details?: unknown;
@@ -730,6 +750,96 @@ export async function lookupOpenPurchaseOrder(input: { poNumber: string }): Prom
       code: "LOOKUP_ERROR",
       message: err?.message ?? "Unknown error while looking up open PO.",
       lines: []
+    };
+  }
+}
+
+export async function updatePurchaseOrderEta(input: UpdatePurchaseOrderEtaInput): Promise<UpdatePurchaseOrderEtaResult> {
+  if (!config.NETSUITE_PO_ETA_UPDATE_RESTLET_URL) {
+    return {
+      success: false,
+      code: "CONFIG_ERROR",
+      message: "NETSUITE_PO_ETA_UPDATE_RESTLET_URL is not configured."
+    };
+  }
+
+  const headers: Record<string, string> = {
+    "content-type": "application/json",
+    accept: "application/json"
+  };
+  const authHeader = buildNetSuiteAuthorizationHeader(config.NETSUITE_PO_ETA_UPDATE_RESTLET_URL);
+  if (authHeader) headers.authorization = authHeader;
+
+  const body: Record<string, unknown> = {
+    eta_date: input.etaDate,
+    update_scope: input.updateScope
+  };
+  if (input.poInternalId) body.po_internal_id = input.poInternalId;
+  if (input.poNumber) body.po_number = input.poNumber;
+  if (input.itemInternalId) body.item_internal_id = input.itemInternalId;
+  if (input.trackingNumber) body.tracking_number = input.trackingNumber;
+  if (input.notes) body.notes = input.notes;
+
+  console.log("[netsuite] updatePurchaseOrderEta start", {
+    hasRestletUrl: Boolean(config.NETSUITE_PO_ETA_UPDATE_RESTLET_URL),
+    hasAuthHeader: Boolean(headers.authorization),
+    poInternalId: input.poInternalId ?? null,
+    poNumber: input.poNumber ?? null,
+    updateScope: input.updateScope
+  });
+
+  try {
+    const response = await fetch(config.NETSUITE_PO_ETA_UPDATE_RESTLET_URL, {
+      method: "POST",
+      headers,
+      body: JSON.stringify(body)
+    });
+    const rawText = await response.text();
+    console.log("[netsuite] updatePurchaseOrderEta response status", { status: response.status });
+    console.log("[netsuite] updatePurchaseOrderEta raw response text", rawText);
+
+    const raw = parseJsonObject(rawText);
+    const normalized: UpdatePurchaseOrderEtaResult = {
+      success: raw.success === true,
+      code: typeof raw.code === "string" ? raw.code : undefined,
+      message: typeof raw.message === "string" ? raw.message : undefined,
+      details: raw.details,
+      poInternalId:
+        typeof raw.poInternalId === "string"
+          ? raw.poInternalId
+          : typeof raw.po_internal_id === "string"
+            ? raw.po_internal_id
+            : undefined,
+      poNumber:
+        typeof raw.poNumber === "string"
+          ? raw.poNumber
+          : typeof raw.po_number === "string"
+            ? raw.po_number
+            : undefined,
+      linesUpdated:
+        typeof raw.linesUpdated === "number"
+          ? raw.linesUpdated
+          : typeof raw.lines_updated === "number"
+            ? raw.lines_updated
+            : undefined
+    };
+
+    if (!response.ok) {
+      return {
+        ...normalized,
+        success: false,
+        code: normalized.code ?? `HTTP_${response.status}`,
+        message: normalized.message ?? `PO ETA update failed (${response.status})`
+      };
+    }
+
+    return normalized;
+  } catch (error) {
+    const err = error as Error;
+    return {
+      success: false,
+      code: "LOOKUP_ERROR",
+      message: err?.message ?? "Unknown NetSuite PO ETA update error."
     };
   }
 }

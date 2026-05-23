@@ -1,4 +1,5 @@
 import { startActionExecutionWorker } from "./domain/services/action-execution-worker.js";
+import { startEtaEmailIngestionWorker } from "./domain/services/eta-email-ingestion-worker.js";
 import { config, assertProductionEnv, isRawEnvSet } from "./shared/config.js";
 import { logger } from "./shared/logger.js";
 
@@ -7,6 +8,7 @@ async function bootstrapWorker() {
 
   const workerIntervalMs = config.EXECUTION_WORKER_INTERVAL_MS ?? 10_000;
   const worker = startActionExecutionWorker(workerIntervalMs);
+  const etaIngestionWorker = startEtaEmailIngestionWorker(config.MICROSOFT_GRAPH_POLL_INTERVAL_MS ?? 60_000);
 
   logger.info("Worker process started", {
     workerName: "janveyos-worker",
@@ -19,6 +21,7 @@ async function bootstrapWorker() {
   process.on("SIGTERM", async () => {
     logger.info("Shutting down worker...");
     await worker.stop();
+    await etaIngestionWorker.stop();
     process.exit(0);
   });
 }

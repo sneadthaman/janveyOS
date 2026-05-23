@@ -33,6 +33,9 @@ begin
   end loop;
   
   alter table public.agent_action_requests
+    drop constraint if exists agent_action_requests_status_check;
+
+  alter table public.agent_action_requests
     add constraint agent_action_requests_status_check
     check (
       status in (

@@ -31,3 +31,33 @@ test("dispatcher returns unsupported_action for unknown action type", async () =
   assert.equal(result.result.code, "unsupported_action");
   assert.match(String(result.result.message), /Unsupported action_type/i);
 });
+
+test("dispatcher routes eta_update correctly", async () => {
+  const prevUrl = config.NETSUITE_PO_ETA_UPDATE_RESTLET_URL;
+  const originalFetch = globalThis.fetch;
+  config.NETSUITE_PO_ETA_UPDATE_RESTLET_URL = "https://example.com/eta";
+  globalThis.fetch = (async () =>
+    ({
+      ok: true,
+      status: 200,
+      text: async () => JSON.stringify({ success: true, poNumber: "PO289731", linesUpdated: 3 })
+    }) as Response) as typeof fetch;
+
+  try {
+    const result = await dispatchActionExecution({
+      actionType: "eta_update",
+      payload: {
+        eta_update_id: "eta-1",
+        po_number: "PO289731",
+        eta_date: "2026-05-29",
+        update_scope: "po_all_lines"
+      }
+    });
+
+    assert.equal(result.handler, "eta_update_execute");
+    assert.equal(result.result.operation, "update_purchase_order_eta");
+  } finally {
+    config.NETSUITE_PO_ETA_UPDATE_RESTLET_URL = prevUrl;
+    globalThis.fetch = originalFetch;
+  }
+});

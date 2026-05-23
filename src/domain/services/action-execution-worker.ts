@@ -9,6 +9,7 @@ import {
   markActionExecuted
 } from "../repositories/agent-worker-repository.js";
 import { notifyQuoteToSoCompleted } from "./slack/quote-to-so-notifier.js";
+import { postSlackMessage } from "./slack/quote-to-so-notifier.js";
 import { dispatchActionExecution } from "../actions/action-dispatcher.js";
 import { normalizeActionType } from "../actions/shared/action-types.js";
 
@@ -72,6 +73,28 @@ export async function executeClaimedActionRequest(
             });
           } catch (notifyError) {
             logger.error("quote_to_so slack completion notification failed", notifyError);
+          }
+        }
+      }
+    }
+
+    if (normalizedType === "eta_update" && !options?.suppressSlackCompletionNotification) {
+      const source = String(claimed.input_json.source_type ?? claimed.input_json.source ?? "").toLowerCase();
+      if (source === "slack") {
+        const slackChannelId = String(claimed.input_json.slack_channel_id ?? "").trim();
+        if (slackChannelId) {
+          try {
+            const output = executed.result as Record<string, unknown>;
+            await postSlackMessage({
+              channel: slackChannelId,
+              text:
+                "✅ ETA update applied.\n" +
+                `PO: ${String(output.poNumber ?? claimed.input_json.po_number ?? "-")}\n` +
+                `ETA: ${String(output.etaDate ?? claimed.input_json.eta_date ?? "-")}\n` +
+                `Request: ${claimed.id}`
+            });
+          } catch (notifyError) {
+            logger.error("eta_update slack completion notification failed", notifyError);
           }
         }
       }

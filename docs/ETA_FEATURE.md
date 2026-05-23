@@ -8,6 +8,7 @@ Current scope:
 - support Slack ETA queries for PO numbers using local records
 - support manual Slack ETA capture into local ETA records
 - add NetSuite client scaffolding for open PO lookup
+- approval-gated `eta_update` action execution flow to NetSuite PO ETA RESTlet
 
 Out of scope in this phase:
 - email inbox parsing
@@ -22,6 +23,8 @@ Out of scope in this phase:
 - `src/domain/services/slack/eta-capture-conversation.ts` parses/saves manual ETA updates from Slack messages.
 - `src/domain/actions/eta-update/eta-slack-parser.ts` normalizes manual ETA text into structured fields.
 - `src/integrations/netsuite/client.ts` includes `lookupOpenPurchaseOrder` for open PO data retrieval when RESTlet is available.
+- `src/domain/actions/eta-update/eta-update-execution-handler.ts` executes approved ETA updates through NetSuite.
+- `src/domain/services/slack/eta-update-approval.ts` sends approval buttons and handles approve/reject/cancel actions.
 
 ## Data Model
 Table: `public.vendor_eta_updates`
@@ -46,6 +49,30 @@ Normalized enums:
 4. Later: scheduled daily ETA agent for match + review queue.
 5. Later: controlled approval workflow for applying ETA updates into NetSuite.
 
+## Outlook Ingestion (Phase 6A)
+- Create an Outlook folder named `AI ETA`.
+- Copy ETA vendor emails into this folder. Moving is optional.
+- The ingestion worker polls this folder and processes recent messages regardless of unread/read status.
+- Dedupe key is Microsoft Graph `message.id` (`graph_message_id` in DB).
+- `internetMessageId` is stored when available.
+
+### Required Env Vars
+- `MICROSOFT_GRAPH_ENABLED` (`true` to enable ingestion worker)
+- `MICROSOFT_GRAPH_USER_EMAIL` (mailbox to read)
+- `MICROSOFT_GRAPH_AI_ETA_FOLDER_NAME` (default `AI ETA`)
+- `MICROSOFT_GRAPH_POLL_INTERVAL_MS` (default `60000`)
+- Auth: either
+  - `MICROSOFT_GRAPH_ACCESS_TOKEN` (delegated token), or
+  - `MICROSOFT_GRAPH_TENANT_ID`, `MICROSOFT_GRAPH_CLIENT_ID`, `MICROSOFT_GRAPH_CLIENT_SECRET`
+- Optional Slack approval destination:
+  - `MICROSOFT_GRAPH_APPROVAL_SLACK_CHANNEL_ID`
+
+### Safety Rules
+- Read-only mailbox behavior: no delete, no send, no move operations.
+- Ingestion does not rely on unread status.
+- NetSuite is not mutated at ingestion time.
+- Ingestion only creates approval-gated `eta_update` action requests.
+
 ## Sources
 Planned source channels:
 - Slack/manual
@@ -57,6 +84,8 @@ Planned source channels:
 - This version is intentionally local-first for ETA answers.
 - Slack ETA queries currently return only local `vendor_eta_updates` results.
 - If no local updates exist, Slack returns a no-data message.
+- ETA updates are never auto-applied to NetSuite; manager approval is required.
+- NetSuite mutation depends on `NETSUITE_PO_ETA_UPDATE_RESTLET_URL`. Missing config fails safely.
 
 ## Manual Slack Capture Examples
 - `Diversey says PO289731 is coming 5/29`

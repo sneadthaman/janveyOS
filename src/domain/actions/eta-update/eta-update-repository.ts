@@ -88,6 +88,20 @@ export async function markEtaUpdateStatus(id: string, status: EtaUpdateStatus): 
   if (error) throw new Error(`Failed to update vendor_eta_updates status: ${error.message}`);
 }
 
+export async function attachActionRequestToEtaUpdate(id: string, actionRequestId: string): Promise<void> {
+  if (!supabaseAdminClient) throw new Error("Supabase is required for ETA updates.");
+
+  const { error } = await supabaseAdminClient
+    .from("vendor_eta_updates")
+    .update({
+      created_action_request_id: actionRequestId,
+      updated_at: new Date().toISOString()
+    })
+    .eq("id", id);
+
+  if (error) throw new Error(`Failed to attach action request to vendor_eta_updates row: ${error.message}`);
+}
+
 function normalizeEtaUpdateRow(row: Record<string, unknown>): NormalizedEtaUpdate {
   return {
     id: String(row.id ?? ""),

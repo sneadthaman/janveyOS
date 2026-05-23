@@ -37,7 +37,11 @@ test("captures and saves manual ETA update from Slack", async () => {
           createdAt: new Date().toISOString(),
           updatedAt: new Date().toISOString()
         };
-      }
+      },
+      attachActionRequestToEtaUpdate: async () => undefined,
+      createAgentActionRequest: async () => "req-eta-1",
+      findLatestEtaUpdateActionRequestByEtaId: async () => null,
+      notifyEtaUpdateApprovalRequested: async () => undefined
     }
   );
 
@@ -65,7 +69,11 @@ test("non-ETA text is ignored and does not save", async () => {
       createEtaUpdate: async () => {
         called = true;
         throw new Error("should not be called");
-      }
+      },
+      attachActionRequestToEtaUpdate: async () => undefined,
+      createAgentActionRequest: async () => "req-eta-2",
+      findLatestEtaUpdateActionRequestByEtaId: async () => null,
+      notifyEtaUpdateApprovalRequested: async () => undefined
     }
   );
 

@@ -6,6 +6,7 @@ import { handleQuoteToSoButtonAction, handleQuoteToSoSlackMessage } from "../dom
 import { handleQuoteToSoApprovalAction } from "../domain/services/slack/quote-to-so-approval.js";
 import { handleEtaSlackQuery } from "../domain/services/slack/eta-query-conversation.js";
 import { handleEtaSlackCapture } from "../domain/services/slack/eta-capture-conversation.js";
+import { handleEtaUpdateApprovalAction } from "../domain/services/slack/eta-update-approval.js";
 
 type SlashTool =
   | "item_lookup"
@@ -117,6 +118,7 @@ export function createSlackApp() {
     try {
       const etaCaptureHandled = await handleEtaSlackCapture({
         text: message.text,
+        slackUserId: message.user,
         slackChannelId: message.channel,
         slackMessageTs: typeof message.ts === "string" ? message.ts : undefined,
         reply: async (out) => {
@@ -174,6 +176,7 @@ export function createSlackApp() {
 
       const etaCaptureHandled = await handleEtaSlackCapture({
         text: cleanedText,
+        slackUserId: event.user,
         slackChannelId: event.channel,
         slackMessageTs: event.ts,
         reply: async (out) => {
@@ -314,6 +317,60 @@ export function createSlackApp() {
     const actionValue = "value" in action && typeof action.value === "string" ? action.value : "";
     const result = await handleQuoteToSoApprovalAction({
       actionId: "quote_to_so_cancel_request",
+      value: actionValue,
+      actorSlackUserId: body.user.id,
+      slackChannelId: "channel" in body && body.channel?.id ? body.channel.id : undefined,
+      slackMessageTs: "message" in body && typeof body.message?.ts === "string" ? body.message.ts : undefined
+    });
+    if (result.kind === "unauthorized") {
+      if (respond) await respond({ response_type: "ephemeral", text: result.message });
+      return;
+    }
+    if (say) await say(result.message);
+  });
+
+  app.action("eta_update_approve_request", async ({ ack, action, body, respond, say }) => {
+    await ack();
+    if (!("user" in body)) return;
+    const actionValue = "value" in action && typeof action.value === "string" ? action.value : "";
+    const result = await handleEtaUpdateApprovalAction({
+      actionId: "eta_update_approve_request",
+      value: actionValue,
+      actorSlackUserId: body.user.id,
+      slackChannelId: "channel" in body && body.channel?.id ? body.channel.id : undefined,
+      slackMessageTs: "message" in body && typeof body.message?.ts === "string" ? body.message.ts : undefined
+    });
+    if (result.kind === "unauthorized") {
+      if (respond) await respond({ response_type: "ephemeral", text: result.message });
+      return;
+    }
+    if (say) await say(result.message);
+  });
+
+  app.action("eta_update_reject_request", async ({ ack, action, body, respond, say }) => {
+    await ack();
+    if (!("user" in body)) return;
+    const actionValue = "value" in action && typeof action.value === "string" ? action.value : "";
+    const result = await handleEtaUpdateApprovalAction({
+      actionId: "eta_update_reject_request",
+      value: actionValue,
+      actorSlackUserId: body.user.id,
+      slackChannelId: "channel" in body && body.channel?.id ? body.channel.id : undefined,
+      slackMessageTs: "message" in body && typeof body.message?.ts === "string" ? body.message.ts : undefined
+    });
+    if (result.kind === "unauthorized") {
+      if (respond) await respond({ response_type: "ephemeral", text: result.message });
+      return;
+    }
+    if (say) await say(result.message);
+  });
+
+  app.action("eta_update_cancel_request", async ({ ack, action, body, respond, say }) => {
+    await ack();
+    if (!("user" in body)) return;
+    const actionValue = "value" in action && typeof action.value === "string" ? action.value : "";
+    const result = await handleEtaUpdateApprovalAction({
+      actionId: "eta_update_cancel_request",
       value: actionValue,
       actorSlackUserId: body.user.id,
       slackChannelId: "channel" in body && body.channel?.id ? body.channel.id : undefined,
