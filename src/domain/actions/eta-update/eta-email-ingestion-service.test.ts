@@ -41,6 +41,7 @@ function baseDeps(overrides: Record<string, unknown> = {}) {
       updatedAt: new Date().toISOString()
     }),
     findLatestEtaUpdateActionRequestByEtaId: async () => null,
+    findExistingEtaUpdateActionRequest: async () => null,
     createAgentActionRequest: async () => "req-eta-1",
     attachActionRequestToEtaUpdate: async () => undefined,
     notifyEtaUpdateApprovalRequested: async () => undefined,
@@ -217,4 +218,30 @@ test("run ingestion processes copied/read messages in AI ETA folder", async () =
     config.MICROSOFT_GRAPH_USER_EMAIL = prevUser;
     config.MICROSOFT_GRAPH_AI_ETA_FOLDER_NAME = prevFolder;
   }
+});
+
+test("duplicate email ingestion does not create duplicate approval cards when active request exists", async () => {
+  let createActionCalls = 0;
+  const result = await processEtaGraphMessage(
+    {
+      id: "m9",
+      subject: "ETA duplicate",
+      bodyText: "PO289807 ETA 6/2"
+    },
+    "AI ETA",
+    baseDeps({
+      findExistingEtaUpdateActionRequest: async () =>
+        ({
+          id: "req-existing",
+          status: "pending"
+        }) as any,
+      createAgentActionRequest: async () => {
+        createActionCalls += 1;
+        return "req-eta-new";
+      }
+    }) as any
+  );
+
+  assert.equal(result.status, "approval_created");
+  assert.equal(createActionCalls, 0);
 });

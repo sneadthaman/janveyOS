@@ -9,7 +9,11 @@ import {
   type EtaEmailIngestionRow
 } from "./eta-email-ingestion-repository.js";
 import { createEtaUpdate, attachActionRequestToEtaUpdate } from "./eta-update-repository.js";
-import { createAgentActionRequest, findLatestEtaUpdateActionRequestByEtaId } from "../../repositories/agent-log-repository.js";
+import {
+  createAgentActionRequest,
+  findExistingEtaUpdateActionRequest,
+  findLatestEtaUpdateActionRequestByEtaId
+} from "../../repositories/agent-log-repository.js";
 import { notifyEtaUpdateApprovalRequested } from "../../services/slack/eta-update-approval.js";
 import { postSlackMessage } from "../../services/slack/quote-to-so-notifier.js";
 import { extractEtaPayloadFromEmail, hasEnoughEtaInfo } from "./eta-email-extraction-service.js";
@@ -24,6 +28,7 @@ type EtaEmailIngestionDependencies = {
   lookupOpenPurchaseOrder: typeof lookupOpenPurchaseOrder;
   createEtaUpdate: typeof createEtaUpdate;
   findLatestEtaUpdateActionRequestByEtaId: typeof findLatestEtaUpdateActionRequestByEtaId;
+  findExistingEtaUpdateActionRequest: typeof findExistingEtaUpdateActionRequest;
   createAgentActionRequest: typeof createAgentActionRequest;
   attachActionRequestToEtaUpdate: typeof attachActionRequestToEtaUpdate;
   notifyEtaUpdateApprovalRequested: typeof notifyEtaUpdateApprovalRequested;
@@ -40,6 +45,7 @@ const defaultDependencies: EtaEmailIngestionDependencies = {
   lookupOpenPurchaseOrder,
   createEtaUpdate,
   findLatestEtaUpdateActionRequestByEtaId,
+  findExistingEtaUpdateActionRequest,
   createAgentActionRequest,
   attachActionRequestToEtaUpdate,
   notifyEtaUpdateApprovalRequested,
@@ -70,6 +76,7 @@ function normalizePoNumber(poNumber: string | null) {
 
 async function createApprovalForEta(input: {
   etaUpdateId: string;
+  graphMessageId: string;
   vendorName: string;
   poNumber: string;
   etaDate: string | null;
@@ -81,7 +88,10 @@ async function createApprovalForEta(input: {
   notes: string;
   itemsSummary: string;
 }, deps: EtaEmailIngestionDependencies = defaultDependencies) {
-  const existingRequest = await deps.findLatestEtaUpdateActionRequestByEtaId(input.etaUpdateId);
+  const existingRequest = await deps.findExistingEtaUpdateActionRequest({
+    etaUpdateId: input.etaUpdateId,
+    graphMessageId: input.graphMessageId
+  });
   if (existingRequest) return existingRequest.id;
 
   const actionRequestId = await deps.createAgentActionRequest({
@@ -102,14 +112,16 @@ async function createApprovalForEta(input: {
       email_sender: input.sender,
       email_subject: input.subject,
       extraction_confidence: input.confidence,
-      proposed_affected_lines: input.itemsSummary
+      proposed_affected_lines: input.itemsSummary,
+      graph_message_id: input.graphMessageId
     },
     previewJson: {
       eta_update_id: input.etaUpdateId,
       po_number: input.poNumber,
       eta_date: input.etaDate,
       tracking_number: input.trackingNumber,
-      source_folder: config.MICROSOFT_GRAPH_AI_ETA_FOLDER_NAME || "AI ETA"
+      source_folder: config.MICROSOFT_GRAPH_AI_ETA_FOLDER_NAME || "AI ETA",
+      graph_message_id: input.graphMessageId
     },
     status: "pending"
   });
@@ -229,6 +241,7 @@ export async function processEtaGraphMessage(
     const actionRequestId = await createApprovalForEta(
       {
       etaUpdateId: etaUpdate.id,
+      graphMessageId: message.id,
       vendorName: etaUpdate.vendorName,
       poNumber,
       etaDate: etaUpdate.etaDate,

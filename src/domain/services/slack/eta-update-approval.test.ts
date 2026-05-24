@@ -65,6 +65,41 @@ test("duplicate approval blocked when already executed", async () => {
   assert.match(result.message, /already executed/i);
 });
 
+test("running duplicate click does not execute twice and does not post new message", async () => {
+  let executeCalls = 0;
+  let postedCalls = 0;
+  let updateCalls = 0;
+  const result = await handleEtaUpdateApprovalAction(
+    {
+      actionId: "eta_update_approve_request",
+      actorSlackUserId: "U-ADMIN",
+      slackChannelId: "C1",
+      slackMessageTs: "111.222",
+      value: JSON.stringify({ actionRequestId: "req-eta-1", etaUpdateId: "eta-1", poNumber: "PO289731", etaDate: "2026-05-29" })
+    },
+    deps({
+      getAgentActionRequestById: async () =>
+        ({ id: "req-eta-1", status: "running", input_json: { po_number: "PO289731", eta_date: "2026-05-29" } }) as any,
+      executeClaimedActionRequest: async () => {
+        executeCalls += 1;
+        return { ok: true } as any;
+      },
+      postSlackMessage: async () => {
+        postedCalls += 1;
+      },
+      updateSlackMessage: async () => {
+        updateCalls += 1;
+      }
+    }) as any
+  );
+
+  assert.equal(result.kind, "ok");
+  assert.equal(result.message, "");
+  assert.equal(executeCalls, 0);
+  assert.equal(postedCalls, 0);
+  assert.equal(updateCalls, 1);
+});
+
 test("slack approval-style execution path calls updatePurchaseOrderEta when env is set", async () => {
   const prevEnv = process.env.NETSUITE_PO_ETA_UPDATE_RESTLET_URL;
   const prevConfig = config.NETSUITE_PO_ETA_UPDATE_RESTLET_URL;
@@ -124,6 +159,7 @@ test("slack approval-style execution path calls updatePurchaseOrderEta when env 
 
 test("successful approve updates Slack from applying to completed with final details and no buttons", async () => {
   const updates: Array<{ text: string; blocks?: Array<Record<string, unknown>> }> = [];
+  let postCalls = 0;
   await handleEtaUpdateApprovalAction(
     {
       actionId: "eta_update_approve_request",
@@ -147,6 +183,9 @@ test("successful approve updates Slack from applying to completed with final det
         }) as any,
       updateSlackMessage: async (payload: { text: string; blocks?: Array<Record<string, unknown>> }) => {
         updates.push(payload);
+      },
+      postSlackMessage: async () => {
+        postCalls += 1;
       }
     }) as any
   );
@@ -165,6 +204,7 @@ test("successful approve updates Slack from applying to completed with final det
   assert.match(finalText, /ETA updated on PO\./);
   const hasActionsBlock = (finalUpdate?.blocks ?? []).some((b) => b.type === "actions");
   assert.equal(hasActionsBlock, false);
+  assert.equal(postCalls, 0);
 });
 
 test("failed approve updates Slack from applying to failed and shows no NetSuite changes", async () => {

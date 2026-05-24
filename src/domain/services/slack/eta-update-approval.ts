@@ -55,6 +55,18 @@ function statusMessage(row: { id: string; status: string }) {
   return `ETA update request ${row.id} status is ${row.status}.`;
 }
 
+function buildEtaRunningBlocks(input: { poNumber?: string | null; etaDate?: string | null }) {
+  return [
+    {
+      type: "section",
+      text: {
+        type: "mrkdwn",
+        text: "⏳ *Applying ETA update...*\n" + `• PO: ${input.poNumber || "-"}\n` + `• ETA: ${input.etaDate || "-"}`
+      }
+    }
+  ] as Array<Record<string, unknown>>;
+}
+
 function buildEtaCompletionBlocks(input: {
   success: boolean;
   actionRequestId: string;
@@ -78,7 +90,7 @@ function buildEtaCompletionBlocks(input: {
             `• Confidence: ${input.confidence || "-"}\n` +
             `• Updated line count: ${typeof input.linesUpdated === "number" ? String(input.linesUpdated) : "-"}\n` +
             `• NetSuite: ${input.netsuiteMessage || "-"}\n` +
-            `• Request: ${input.actionRequestId}`
+            `_Ref: ${input.actionRequestId}_`
         }
       }
     ] as Array<Record<string, unknown>>;
@@ -94,7 +106,7 @@ function buildEtaCompletionBlocks(input: {
           `• PO: ${input.poNumber || "-"}\n` +
           `• Reason: ${input.safeErrorMessage || "Unknown execution failure."}\n` +
           "• No NetSuite changes were applied.\n" +
-          `• Request: ${input.actionRequestId}`
+          `_Ref: ${input.actionRequestId}_`
       }
     }
   ] as Array<Record<string, unknown>>;
@@ -238,6 +250,39 @@ export async function handleEtaUpdateApprovalAction(input: {
   const existing = await deps.getAgentActionRequestById(parsed.actionRequestId);
   if (!existing) return { kind: "ok" as const, message: `Request ${parsed.actionRequestId} was not found.` };
   if (!canExecuteActionRequest(existing.status)) {
+    if (input.slackChannelId && input.slackMessageTs) {
+      const inputJson = (existing.input_json ?? {}) as Record<string, unknown>;
+      const poNumber = parsed.poNumber ?? (String(inputJson.po_number ?? "").trim() || "-");
+      const etaDate = parsed.etaDate ?? (String(inputJson.eta_date ?? "").trim() || "-");
+      if (existing.status === "running") {
+        await deps.updateSlackMessage({
+          channel: input.slackChannelId,
+          ts: input.slackMessageTs,
+          text: "⏳ Applying ETA update...",
+          blocks: buildEtaRunningBlocks({ poNumber, etaDate })
+        });
+        return { kind: "ok" as const, message: "" };
+      }
+      if (existing.status === "executed") {
+        await deps.updateSlackMessage({
+          channel: input.slackChannelId,
+          ts: input.slackMessageTs,
+          text: "✅ ETA update applied",
+          blocks: buildEtaCompletionBlocks({
+            success: true,
+            actionRequestId: existing.id,
+            poNumber,
+            etaDate,
+            confidence: String(inputJson.extraction_confidence ?? inputJson.eta_confidence ?? "-"),
+            linesUpdated: null,
+            netsuiteMessage: typeof (existing.output_json as Record<string, unknown> | null)?.message === "string"
+              ? String((existing.output_json as Record<string, unknown>).message)
+              : null
+          })
+        });
+        return { kind: "ok" as const, message: "" };
+      }
+    }
     return { kind: "ok" as const, message: statusMessage(existing as { id: string; status: string }) };
   }
 
@@ -247,13 +292,8 @@ export async function handleEtaUpdateApprovalAction(input: {
       await deps.updateSlackMessage({
         channel: input.slackChannelId,
         ts: input.slackMessageTs,
-        text: "⏳ Running",
-        blocks: [
-          {
-            type: "section",
-            text: { type: "mrkdwn", text: `⏳ *Running*\n• Request: ${approved.id}\n• PO: ${parsed.poNumber ?? "-"}` }
-          }
-        ]
+        text: "⏳ Applying ETA update...",
+        blocks: buildEtaRunningBlocks({ poNumber: parsed.poNumber ?? "-", etaDate: parsed.etaDate ?? "-" })
       });
     }
 
@@ -286,7 +326,6 @@ export async function handleEtaUpdateApprovalAction(input: {
         hasOutputJson: run.ok ? Boolean(run.result && typeof run.result === "object") : false
       });
       const inputJson = (existing.input_json ?? {}) as Record<string, unknown>;
-      const channel = String(inputJson.slack_channel_id ?? "").trim();
       const output = run.ok && run.result && typeof run.result === "object" ? (run.result as Record<string, unknown>) : null;
       const rawExecutionStatus = String(output?.executionStatus ?? (run.ok ? "success" : "failed")).trim().toLowerCase();
       const successStatuses = new Set(["success", "executed", "applied"]);
@@ -377,16 +416,6 @@ export async function handleEtaUpdateApprovalAction(input: {
           status: "success",
           po: poNumber
         });
-        if (channel) {
-          await deps.postSlackMessage({
-            channel,
-            text:
-              `✅ ETA update applied.\n` +
-              `PO: ${poNumber}\n` +
-              `ETA: ${etaDate}\n` +
-              `Request: ${approved.id}`
-          });
-        }
         return;
       }
 
@@ -440,12 +469,6 @@ export async function handleEtaUpdateApprovalAction(input: {
         status: "failed",
         po: poNumber
       });
-      if (channel) {
-        await deps.postSlackMessage({
-          channel,
-          text: `❌ ETA update failed.\nRequest: ${approved.id}\nReason: ${safeError}`
-        });
-      }
     })().catch(async (error) => {
       logger.error("eta_update.slack.approval.execute_async_failed", error);
       try {

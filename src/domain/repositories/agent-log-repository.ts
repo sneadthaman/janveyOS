@@ -248,3 +248,30 @@ export async function findLatestEtaUpdateActionRequestByEtaId(etaUpdateId: strin
 
   return null;
 }
+
+export async function findExistingEtaUpdateActionRequest(input: {
+  etaUpdateId?: string;
+  graphMessageId?: string;
+}) {
+  if (!supabaseAdminClient) throw new Error("Supabase is required for action request logging.");
+  const { data, error } = await supabaseAdminClient
+    .from("agent_action_requests")
+    .select("id,status,input_json,output_json,created_at")
+    .eq("action_type", "eta_update")
+    .order("created_at", { ascending: false })
+    .limit(500);
+
+  if (error) throw new Error(`Failed to fetch eta_update action request rows: ${error.message}`);
+
+  const activeStatuses = new Set(["pending", "approved", "running", "executed"]);
+  for (const row of data ?? []) {
+    if (!activeStatuses.has(String(row.status ?? ""))) continue;
+    const inputJson = (row.input_json ?? {}) as Record<string, unknown>;
+    const etaId = String(inputJson.eta_update_id ?? inputJson.etaUpdateId ?? "").trim();
+    const graphId = String(inputJson.graph_message_id ?? inputJson.graphMessageId ?? "").trim();
+    if (input.etaUpdateId && etaId && etaId === input.etaUpdateId) return row;
+    if (input.graphMessageId && graphId && graphId === input.graphMessageId) return row;
+  }
+
+  return null;
+}

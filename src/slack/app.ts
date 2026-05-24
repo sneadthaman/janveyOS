@@ -290,7 +290,7 @@ export function createSlackApp() {
       if (respond) await respond({ response_type: "ephemeral", text: result.message });
       return;
     }
-    if (say) await say(result.message);
+    if (say && result.message.trim().length > 0) await say(result.message);
   });
 
   app.action("quote_to_so_reject_request", async ({ ack, action, body, respond, say }) => {
@@ -308,7 +308,7 @@ export function createSlackApp() {
       if (respond) await respond({ response_type: "ephemeral", text: result.message });
       return;
     }
-    if (say) await say(result.message);
+    if (say && result.message.trim().length > 0) await say(result.message);
   });
 
   app.action("quote_to_so_cancel_request", async ({ ack, action, body, respond, say }) => {
@@ -326,7 +326,7 @@ export function createSlackApp() {
       if (respond) await respond({ response_type: "ephemeral", text: result.message });
       return;
     }
-    if (say) await say(result.message);
+    if (say && result.message.trim().length > 0) await say(result.message);
   });
 
   app.action("eta_update_approve_request", async ({ ack, action, body, respond, say }) => {
