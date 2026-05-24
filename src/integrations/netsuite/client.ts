@@ -101,6 +101,7 @@ export interface OpenPurchaseOrderLookupResult {
   vendorName?: string;
   status?: string;
   lines: OpenPurchaseOrderLookupLine[];
+  lineCount?: number;
   code?: string;
   message?: string;
   details?: unknown;
@@ -616,11 +617,13 @@ function normalizeOpenPoLookupResponse(raw: Record<string, unknown>): OpenPurcha
     raw.data && typeof raw.data === "object" && !Array.isArray(raw.data) ? (raw.data as Record<string, unknown>) : raw;
   const linesRaw = Array.isArray(payload.lines)
     ? payload.lines
-    : Array.isArray(payload.items)
-      ? payload.items
-      : Array.isArray(payload.po_lines)
-        ? payload.po_lines
-        : [];
+    : Array.isArray(payload.openLines)
+      ? payload.openLines
+      : Array.isArray(payload.items)
+        ? payload.items
+        : Array.isArray(payload.po_lines)
+          ? payload.po_lines
+          : [];
   const lines = linesRaw
     .filter((line): line is Record<string, unknown> => Boolean(line && typeof line === "object" && !Array.isArray(line)))
     .map((line) => ({
@@ -672,6 +675,8 @@ function normalizeOpenPoLookupResponse(raw: Record<string, unknown>): OpenPurcha
         ? payload.poInternalId
         : typeof payload.po_internal_id === "string"
           ? payload.po_internal_id
+          : typeof payload.poId === "string"
+            ? payload.poId
           : undefined,
     tranId:
       typeof payload.tranId === "string"
@@ -696,6 +701,7 @@ function normalizeOpenPoLookupResponse(raw: Record<string, unknown>): OpenPurcha
           ? raw.status
           : undefined,
     lines,
+    lineCount: lines.length,
     code:
       typeof payload.code === "string"
         ? payload.code

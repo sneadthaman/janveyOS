@@ -103,6 +103,48 @@ test("open PO lookup normalizes RESTlet status/data schema as success", async ()
   }
 });
 
+test("open PO lookup maps data.poId and data.openLines correctly", async () => {
+  const prev = config.NETSUITE_OPEN_PO_LOOKUP_RESTLET_URL;
+  const originalFetch = globalThis.fetch;
+  config.NETSUITE_OPEN_PO_LOOKUP_RESTLET_URL = "https://example.com/open-po-lookup";
+
+  globalThis.fetch = (async () => {
+    return {
+      ok: true,
+      status: 200,
+      text: async () =>
+        JSON.stringify({
+          status: true,
+          data: {
+            poId: "173492",
+            poNumber: "PO289807",
+            openLineCount: 1,
+            openLines: [
+              {
+                lineId: "10",
+                itemNumber: "ITEM-OPEN",
+                quantity: 1
+              }
+            ]
+          }
+        })
+    } as Response;
+  }) as typeof fetch;
+
+  try {
+    const result = await lookupOpenPurchaseOrder({ po: "PO289807" });
+    assert.equal(result.success, true);
+    assert.equal(result.poInternalId, "173492");
+    assert.equal(result.tranId, "PO289807");
+    assert.equal(result.lines.length, 1);
+    assert.equal(result.lineCount, 1);
+    assert.equal(result.lines[0]?.itemNumber, "ITEM-OPEN");
+  } finally {
+    config.NETSUITE_OPEN_PO_LOOKUP_RESTLET_URL = prev;
+    globalThis.fetch = originalFetch;
+  }
+});
+
 test("open PO lookup handles failure response", async () => {
   const prev = config.NETSUITE_OPEN_PO_LOOKUP_RESTLET_URL;
   const originalFetch = globalThis.fetch;
