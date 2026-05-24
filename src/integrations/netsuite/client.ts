@@ -133,6 +133,9 @@ export interface UpdatePurchaseOrderEtaResult {
   poInternalId?: string;
   poNumber?: string;
   linesUpdated?: number;
+  updatedLineCount?: number;
+  updates?: unknown[];
+  data?: Record<string, unknown>;
 }
 
 export class NetSuiteRestletError extends Error {
@@ -842,8 +845,10 @@ export async function updatePurchaseOrderEta(input: UpdatePurchaseOrderEtaInput)
     console.log("[netsuite] updatePurchaseOrderEta raw response text", rawText);
 
     const raw = parseJsonObject(rawText);
+    const payload =
+      raw.data && typeof raw.data === "object" && !Array.isArray(raw.data) ? (raw.data as Record<string, unknown>) : undefined;
     const normalized: UpdatePurchaseOrderEtaResult = {
-      success: raw.success === true,
+      success: raw.success === true || raw.status === true,
       code: typeof raw.code === "string" ? raw.code : undefined,
       message: typeof raw.message === "string" ? raw.message : undefined,
       details: raw.details,
@@ -864,7 +869,19 @@ export async function updatePurchaseOrderEta(input: UpdatePurchaseOrderEtaInput)
           ? raw.linesUpdated
           : typeof raw.lines_updated === "number"
             ? raw.lines_updated
-            : undefined
+            : typeof payload?.updatedLineCount === "number"
+              ? payload.updatedLineCount
+              : typeof payload?.linesUpdated === "number"
+                ? payload.linesUpdated
+                : undefined,
+      updatedLineCount:
+        typeof payload?.updatedLineCount === "number"
+          ? payload.updatedLineCount
+          : typeof payload?.linesUpdated === "number"
+            ? payload.linesUpdated
+            : undefined,
+      updates: Array.isArray(payload?.updates) ? payload.updates : undefined,
+      data: payload
     };
 
     if (!response.ok) {

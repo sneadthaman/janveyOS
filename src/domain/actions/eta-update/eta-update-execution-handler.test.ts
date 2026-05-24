@@ -151,3 +151,41 @@ test("failure response does not mark applied", async () => {
   assert.equal(statuses[0]?.status, "needs_review");
   assert.equal(statuses.some((s) => s.status === "applied"), false);
 });
+
+test("handler treats status/data updater response as executed and maps updatedLineCount", async () => {
+  const prev = config.NETSUITE_PO_ETA_UPDATE_RESTLET_URL;
+  config.NETSUITE_PO_ETA_UPDATE_RESTLET_URL = "https://example.com/eta";
+  const statuses: Array<{ id: string; status: string }> = [];
+
+  try {
+    const result = await runEtaUpdateExecutionHandlerWithDeps(
+      {
+        eta_update_id: "eta-5",
+        po_number: "PO289807",
+        eta_date: "2026-06-05",
+        extraction_confidence: "HIGH",
+        source_type: "email",
+        raw_notes: "note"
+      },
+      {
+        updatePurchaseOrderEta: async () =>
+          ({
+            success: true,
+            message: "PO ETA update completed",
+            updatedLineCount: 1,
+            data: { updatedLineCount: 1, updates: [{ line: 1 }] }
+          }) as any,
+        markEtaUpdateStatus: async (id, status) => {
+          statuses.push({ id, status });
+        }
+      }
+    );
+
+    assert.equal(result.success, true);
+    assert.equal(result.updatedLineCount, 1);
+    assert.equal(result.linesUpdated, 1);
+    assert.equal(statuses[0]?.status, "applied");
+  } finally {
+    config.NETSUITE_PO_ETA_UPDATE_RESTLET_URL = prev;
+  }
+});

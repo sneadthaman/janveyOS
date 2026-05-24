@@ -110,7 +110,8 @@ export async function runEtaUpdateExecutionHandlerWithDeps(
     etaConfidence,
     etaSource,
     trackingNumber: trackingNumber ?? null,
-    linesUpdated: response.linesUpdated ?? null,
+    linesUpdated: response.linesUpdated ?? response.updatedLineCount ?? null,
+    updatedLineCount: response.updatedLineCount ?? response.linesUpdated ?? null,
     netsuiteResponse: response
   };
 }
