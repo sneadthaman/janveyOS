@@ -12,7 +12,7 @@ import {
 import { findById } from "./ingested-document-repository.js";
 import type { DocumentType, IngestedDocument } from "./ingested-document-types.js";
 
-const EXTRACTOR_VERSION = "phase6c-rule-based-v1";
+const EXTRACTOR_VERSION = "phase6c5-rule-based-v2";
 
 interface Deps {
   findDocumentById: (documentId: string) => Promise<IngestedDocument | null>;
@@ -65,7 +65,12 @@ export async function processIngestedDocumentWithDeps(
   }
 
   const text = (document.extractedText ?? "").trim();
-  const classification = resolved.classifyDocumentText(text);
+  const classification = resolved.classifyDocumentText(text, {
+    fileName: document.fileName,
+    sourceSubject: document.sourceSubject,
+    sourceSender: document.sourceSender,
+    sourceFolderHint: document.sourceFolderHint
+  });
 
   const extraction = await resolved.createDocumentExtraction({
     documentId,
@@ -80,13 +85,17 @@ export async function processIngestedDocumentWithDeps(
 
   let candidates: EtaUpdateCandidateRecord[] = [];
 
-  if (classification.classification === "eta_update") {
-    const extractedCandidates = resolved.extractEtaUpdateCandidates(text);
+  if (classification.classification === "eta_update" || classification.classification === "invoice_with_shipping_signal") {
+    const extractedCandidates = resolved.extractEtaUpdateCandidates(text, { classification: classification.classification });
     candidates = await resolved.createEtaUpdateCandidates(
       extractedCandidates.map((candidate) => ({
         documentExtractionId: extraction.id,
         poNumber: candidate.poNumber,
         etaDate: candidate.etaDate,
+        etaDateSource: candidate.etaDateSource,
+        etaDateIsEstimated: candidate.etaDateIsEstimated,
+        baseDate: candidate.baseDate,
+        baseDateSource: candidate.baseDateSource,
         trackingNumber: candidate.trackingNumber,
         carrier: candidate.carrier,
         itemNumber: candidate.itemNumber,

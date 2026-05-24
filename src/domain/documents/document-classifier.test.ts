@@ -13,7 +13,31 @@ test("classifier identifies purchase_order", () => {
   assert.equal(result.classification, "purchase_order");
 });
 
+test("classifier identifies invoice_with_shipping_signal", () => {
+  const result = classifyDocumentText("Invoice #9981\nShip Date: 05/21/2026\nCarrier: UPS\nTracking 1Z999AA10123456784");
+  assert.equal(result.classification, "invoice_with_shipping_signal");
+});
+
 test("classifier identifies unknown", () => {
   const result = classifyDocumentText("Hello team, attached is a general update with no logistics info.");
   assert.equal(result.classification, "unknown");
+});
+
+test("classifier prioritizes strong customer PO signals from customer_po folder", () => {
+  const text = [
+    "Purchase Order",
+    "PO Number 6030666782",
+    "Bill To",
+    "Ship To",
+    "Item 33295380"
+  ].join("\n");
+
+  const result = classifyDocumentText(text, {
+    fileName: "PO_NYCTA_6030666782_33295380.PDF",
+    sourceSubject: "Dispatched Purchase Order # 6030666782",
+    sourceSender: "Gail.Garibaldi@nyct.com",
+    sourceFolderHint: "customer_po"
+  });
+
+  assert.ok(result.classification === "customer_purchase_order" || result.classification === "purchase_order");
 });

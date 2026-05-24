@@ -7,6 +7,7 @@ import { handleQuoteToSoApprovalAction } from "../domain/services/slack/quote-to
 import { handleEtaSlackQuery } from "../domain/services/slack/eta-query-conversation.js";
 import { handleEtaSlackCapture } from "../domain/services/slack/eta-capture-conversation.js";
 import { handleEtaUpdateApprovalAction } from "../domain/services/slack/eta-update-approval.js";
+import { handleDocumentReviewAction } from "../domain/services/slack/document-review-actions.js";
 
 type SlashTool =
   | "item_lookup"
@@ -378,6 +379,51 @@ export function createSlackApp() {
       if (respond) await respond({ response_type: "ephemeral", text: result.message });
       return;
     }
+  });
+
+  app.action("document_review_eta_approve", async ({ ack, action, body, respond }) => {
+    await ack();
+    if (!("user" in body)) return;
+    const actionValue = "value" in action && typeof action.value === "string" ? action.value : "";
+    const result = await handleDocumentReviewAction({
+      actionId: "document_review_eta_approve",
+      value: actionValue,
+      actorSlackUserId: body.user.id,
+      slackChannelId: "channel" in body && body.channel?.id ? body.channel.id : undefined,
+      slackMessageTs: "message" in body && typeof body.message?.ts === "string" ? body.message.ts : undefined
+    });
+    if (result.kind === "error" && respond) {
+      await respond({ response_type: "ephemeral", text: result.message });
+    }
+  });
+
+  app.action("document_review_eta_reject", async ({ ack, action, body, respond }) => {
+    await ack();
+    if (!("user" in body)) return;
+    const actionValue = "value" in action && typeof action.value === "string" ? action.value : "";
+    const result = await handleDocumentReviewAction({
+      actionId: "document_review_eta_reject",
+      value: actionValue,
+      actorSlackUserId: body.user.id,
+      slackChannelId: "channel" in body && body.channel?.id ? body.channel.id : undefined,
+      slackMessageTs: "message" in body && typeof body.message?.ts === "string" ? body.message.ts : undefined
+    });
+    if (result.kind === "error" && respond) {
+      await respond({ response_type: "ephemeral", text: result.message });
+    }
+  });
+
+  app.action("document_review_eta_ignore", async ({ ack, action, body }) => {
+    await ack();
+    if (!("user" in body)) return;
+    const actionValue = "value" in action && typeof action.value === "string" ? action.value : "";
+    await handleDocumentReviewAction({
+      actionId: "document_review_eta_ignore",
+      value: actionValue,
+      actorSlackUserId: body.user.id,
+      slackChannelId: "channel" in body && body.channel?.id ? body.channel.id : undefined,
+      slackMessageTs: "message" in body && typeof body.message?.ts === "string" ? body.message.ts : undefined
+    });
   });
 
   return app;

@@ -28,7 +28,9 @@
     "test:tool-pricing-update-preview": "tsx scripts/test-tool-pricing-update-preview.ts",
     "dev:reset-quote-to-so": "tsx scripts/dev-reset-quote-to-so.ts",
     "dev:ingest-pdf": "tsx scripts/dev-ingest-pdf.ts",
+    "outlook:scan-cust-po": "tsx scripts/outlook-scan-customer-po-folder.ts",
     "eta:reviews": "tsx scripts/list-pending-eta-reviews.ts",
+    "eta:post-reviews": "tsx scripts/post-pending-eta-reviews-to-slack.ts",
     "eta:approve": "tsx scripts/approve-eta-review.ts",
     "eta:reject": "tsx scripts/reject-eta-review.ts"
   },

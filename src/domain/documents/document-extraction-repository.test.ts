@@ -57,4 +57,5 @@ test("repository creates eta candidates", async () => {
   assert.equal(candidates.length, 1);
   assert.equal(candidates[0]?.poNumber, "PO289731");
   assert.equal(candidates[0]?.appliesToEntirePo, true);
+  assert.equal(candidates[0]?.etaDateIsEstimated, false);
 });

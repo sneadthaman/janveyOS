@@ -1,8 +1,16 @@
-export type IngestedDocumentSource = "email_attachment" | "slack_upload" | "manual_upload" | "other";
+export type IngestedDocumentSource = "email_attachment" | "email_body" | "slack_upload" | "manual_upload" | "other";
 
 export type ExtractionStatus = "pending" | "completed" | "failed";
 
-export type DocumentType = "unknown" | "eta_update" | "purchase_order" | "quote" | "invoice" | "other";
+export type DocumentType =
+  | "unknown"
+  | "eta_update"
+  | "customer_purchase_order"
+  | "invoice_with_shipping_signal"
+  | "purchase_order"
+  | "quote"
+  | "invoice"
+  | "other";
 
 export interface CreateIngestedDocumentInput {
   source: IngestedDocumentSource;
@@ -10,6 +18,13 @@ export interface CreateIngestedDocumentInput {
   sourceThreadId?: string | null;
   sourceSender?: string | null;
   sourceSubject?: string | null;
+  sourceMailbox?: string | null;
+  sourceFolder?: string | null;
+  sourceFolderHint?: string | null;
+  sourceReceivedAt?: string | null;
+  routedByMessageId?: string | null;
+  routedBySubject?: string | null;
+  routedBySender?: string | null;
   fileName: string;
   mimeType?: string;
   fileSizeBytes?: number | null;
@@ -19,6 +34,8 @@ export interface CreateIngestedDocumentInput {
   extractionStatus?: ExtractionStatus;
   extractionError?: string | null;
   documentType?: DocumentType | null;
+  classificationMismatch?: boolean;
+  needsManualTriage?: boolean;
 }
 
 export interface IngestedDocument {
@@ -28,6 +45,13 @@ export interface IngestedDocument {
   sourceThreadId: string | null;
   sourceSender: string | null;
   sourceSubject: string | null;
+  sourceMailbox: string | null;
+  sourceFolder: string | null;
+  sourceFolderHint: string | null;
+  sourceReceivedAt: string | null;
+  routedByMessageId: string | null;
+  routedBySubject: string | null;
+  routedBySender: string | null;
   fileName: string;
   mimeType: string;
   fileSizeBytes: number | null;
@@ -37,6 +61,8 @@ export interface IngestedDocument {
   extractionStatus: ExtractionStatus;
   extractionError: string | null;
   documentType: DocumentType | null;
+  classificationMismatch: boolean;
+  needsManualTriage: boolean;
   createdAt: string;
   updatedAt: string;
 }

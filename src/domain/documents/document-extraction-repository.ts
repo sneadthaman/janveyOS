@@ -17,6 +17,10 @@ export interface EtaUpdateCandidateRecord {
   documentExtractionId: string;
   poNumber: string | null;
   etaDate: string | null;
+  etaDateSource: string | null;
+  etaDateIsEstimated: boolean;
+  baseDate: string | null;
+  baseDateSource: string | null;
   trackingNumber: string | null;
   carrier: string | null;
   itemNumber: string | null;
@@ -51,6 +55,10 @@ function normalizeCandidate(row: Record<string, unknown>): EtaUpdateCandidateRec
     documentExtractionId: String(row.document_extraction_id ?? ""),
     poNumber: row.po_number ? String(row.po_number) : null,
     etaDate: row.eta_date ? String(row.eta_date) : null,
+    etaDateSource: row.eta_date_source ? String(row.eta_date_source) : null,
+    etaDateIsEstimated: Boolean(row.eta_date_is_estimated),
+    baseDate: row.base_date ? String(row.base_date) : null,
+    baseDateSource: row.base_date_source ? String(row.base_date_source) : null,
     trackingNumber: row.tracking_number ? String(row.tracking_number) : null,
     carrier: row.carrier ? String(row.carrier) : null,
     itemNumber: row.item_number ? String(row.item_number) : null,
@@ -97,6 +105,10 @@ export async function createEtaUpdateCandidates(
     documentExtractionId: string;
     poNumber?: string | null;
     etaDate?: string | null;
+    etaDateSource?: string | null;
+    etaDateIsEstimated?: boolean;
+    baseDate?: string | null;
+    baseDateSource?: string | null;
     trackingNumber?: string | null;
     carrier?: string | null;
     itemNumber?: string | null;
@@ -113,6 +125,10 @@ export async function createEtaUpdateCandidatesWithDeps(
     documentExtractionId: string;
     poNumber?: string | null;
     etaDate?: string | null;
+    etaDateSource?: string | null;
+    etaDateIsEstimated?: boolean;
+    baseDate?: string | null;
+    baseDateSource?: string | null;
     trackingNumber?: string | null;
     carrier?: string | null;
     itemNumber?: string | null;
@@ -128,6 +144,10 @@ export async function createEtaUpdateCandidatesWithDeps(
     document_extraction_id: row.documentExtractionId,
     po_number: row.poNumber ?? null,
     eta_date: row.etaDate ?? null,
+    eta_date_source: row.etaDateSource ?? null,
+    eta_date_is_estimated: row.etaDateIsEstimated ?? false,
+    base_date: row.baseDate ?? null,
+    base_date_source: row.baseDateSource ?? null,
     tracking_number: row.trackingNumber ?? null,
     carrier: row.carrier ?? null,
     item_number: row.itemNumber ?? null,

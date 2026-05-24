@@ -9,6 +9,13 @@ export interface IngestPdfDocumentInput {
   sourceThreadId?: string | null;
   sourceSender?: string | null;
   sourceSubject?: string | null;
+  sourceMailbox?: string | null;
+  sourceFolder?: string | null;
+  sourceFolderHint?: string | null;
+  sourceReceivedAt?: string | null;
+  routedByMessageId?: string | null;
+  routedBySubject?: string | null;
+  routedBySender?: string | null;
   fileName: string;
   mimeType?: string;
   fileSizeBytes?: number | null;
@@ -24,6 +31,13 @@ interface DocumentIngestionDeps {
     sourceThreadId?: string | null;
     sourceSender?: string | null;
     sourceSubject?: string | null;
+    sourceMailbox?: string | null;
+    sourceFolder?: string | null;
+    sourceFolderHint?: string | null;
+    sourceReceivedAt?: string | null;
+    routedByMessageId?: string | null;
+    routedBySubject?: string | null;
+    routedBySender?: string | null;
     fileName: string;
     mimeType?: string;
     fileSizeBytes?: number | null;
@@ -73,6 +87,13 @@ export async function ingestPdfDocumentWithDeps(
     sourceThreadId: input.sourceThreadId ?? null,
     sourceSender: input.sourceSender ?? null,
     sourceSubject: input.sourceSubject ?? null,
+    sourceMailbox: input.sourceMailbox ?? null,
+    sourceFolder: input.sourceFolder ?? null,
+    sourceFolderHint: input.sourceFolderHint ?? null,
+    sourceReceivedAt: input.sourceReceivedAt ?? null,
+    routedByMessageId: input.routedByMessageId ?? null,
+    routedBySubject: input.routedBySubject ?? null,
+    routedBySender: input.routedBySender ?? null,
     fileName: input.fileName,
     mimeType: input.mimeType ?? "application/pdf",
     fileSizeBytes: input.fileSizeBytes ?? input.buffer.byteLength,
