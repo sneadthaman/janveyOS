@@ -18,6 +18,11 @@ async function bootstrapWorker() {
     env: config.NODE_ENV
   });
 
+  logger.info('netsuite eta env check', {
+  hasPoEtaUpdateUrl: Boolean(process.env.NETSUITE_PO_ETA_UPDATE_RESTLET_URL),
+  hasOpenPoLookupUrl: Boolean(process.env.NETSUITE_OPEN_PO_LOOKUP_RESTLET_URL),
+});
+
   process.on("SIGTERM", async () => {
     logger.info("Shutting down worker...");
     await worker.stop();
