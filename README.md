@@ -318,6 +318,79 @@ Manual tests:
 1. First Approval
 - Trigger Slack quote conversion and approve once.
 - Expect one `quote_to_so_executions` row, status transitions `running -> completed`.
+
+## Document Review + Outlook Ingestion (Phases 6F, 6G, 6G.1)
+
+### New Environment Variables
+
+- `DOCUMENT_REVIEW_SLACK_CHANNEL_ID`
+- `OUTLOOK_INGESTION_ENABLED=false`
+- `OUTLOOK_MAILBOX=<mailbox@domain>`
+- `OUTLOOK_CUSTOMER_PO_FOLDER_NAME=AI Cust PO`
+- `OUTLOOK_MAX_MESSAGES=10`
+- `MICROSOFT_GRAPH_TENANT_ID`
+- `MICROSOFT_GRAPH_CLIENT_ID`
+- `MICROSOFT_GRAPH_CLIENT_SECRET`
+
+### New Scripts
+
+- `npm run eta:post-reviews -- [limit]`
+  - posts pending ETA review cards to Slack
+- `npm run outlook:scan-cust-po -- --dry-run --limit 10`
+  - scans AI Cust PO folder and reports candidates
+- `npm run outlook:scan-cust-po -- --ingest --limit 10`
+  - ingests discovered customer PO PDFs/bodies
+- `npm run outlook:scan-cust-po -- --ingest --extract --limit 10`
+  - ingest + classify + mismatch/triage updates
+
+### Slack Review Cards (Phase 6F)
+
+- ETA candidate cards post to `DOCUMENT_REVIEW_SLACK_CHANNEL_ID`
+- Buttons:
+  - `Approve ETA`
+  - `Reject`
+  - `Maybe Later`
+- Actions update the original Slack card (`chat.update`) and use existing review services.
+- Approval creates pending `eta_update` action requests only.
+- No NetSuite mutation is executed from these review buttons.
+
+### Outlook AI Cust PO Ingestion (Phase 6G)
+
+Scope:
+- Folder: `AI Cust PO` only
+- Source hint: `customer_po`
+- No Sales Order creation
+- No NetSuite writes
+- No email move/delete
+
+Dry-run shows:
+- folder messages scanned
+- PDF files found
+- sender/subject/message ids
+
+Ingest mode writes `ingested_documents` with mailbox/folder/folder_hint metadata and (optionally) classification results.
+
+### Thread-Aware Hardening (Phase 6G.1)
+
+Defaults:
+- `--include-thread` enabled
+- `--include-body` enabled
+- disable with `--no-thread` / `--no-body`
+
+Thread behavior:
+- For each routed folder message, scans same-conversation messages for PDF attachments.
+- Preserves metadata from attachment source message and routed-by message.
+- Deduplicates by `sourceMessageId + attachmentId` and by document hash.
+- Output distinguishes `ingested` vs `duplicate_existing_document`.
+
+Body fallback behavior:
+- If no PDF and body has strong PO signals, ingests `source=email_body` as `email-body-<messageId>.txt`.
+- Automatic replies are skipped unless strong PO signals are present.
+
+Resilience:
+- If Graph conversation query fails (e.g., “restriction or sort order is too complex”), thread expansion is skipped for that message and processing continues.
+- Logged as `outlook.customer_po.thread_scan_skipped`.
+- Summaries include `threadScanErrors`.
 - Expect one NetSuite Sales Order.
 
 2. Duplicate Approval After Completion

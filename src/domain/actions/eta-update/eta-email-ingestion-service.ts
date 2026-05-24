@@ -1,6 +1,13 @@
 import { logger } from "../../../shared/logger.js";
 import { config } from "../../../shared/config.js";
-import { findMailFolderByDisplayName, listMessagesInFolder, type GraphMailMessage } from "../../../integrations/microsoft-graph/client.js";
+import {
+  downloadFileAttachment,
+  findMailFolderByDisplayName,
+  listMessageAttachments,
+  listMessagesInFolder,
+  type GraphMailMessage
+} from "../../../integrations/microsoft-graph/client.js";
+import { extractPdfText } from "../../documents/pdf-text-extractor.js";
 import { lookupOpenPurchaseOrder } from "../../../integrations/netsuite/client.js";
 import {
   createEtaEmailIngestion,
@@ -21,6 +28,9 @@ import { extractEtaPayloadFromEmail, hasEnoughEtaInfo } from "./eta-email-extrac
 type EtaEmailIngestionDependencies = {
   findMailFolderByDisplayName: typeof findMailFolderByDisplayName;
   listMessagesInFolder: typeof listMessagesInFolder;
+  listMessageAttachments: typeof listMessageAttachments;
+  downloadFileAttachment: typeof downloadFileAttachment;
+  extractPdfText: typeof extractPdfText;
   findEtaEmailIngestionByGraphMessageId: typeof findEtaEmailIngestionByGraphMessageId;
   createEtaEmailIngestion: typeof createEtaEmailIngestion;
   updateEtaEmailIngestion: typeof updateEtaEmailIngestion;
@@ -38,6 +48,9 @@ type EtaEmailIngestionDependencies = {
 const defaultDependencies: EtaEmailIngestionDependencies = {
   findMailFolderByDisplayName,
   listMessagesInFolder,
+  listMessageAttachments,
+  downloadFileAttachment,
+  extractPdfText,
   findEtaEmailIngestionByGraphMessageId,
   createEtaEmailIngestion,
   updateEtaEmailIngestion,
@@ -142,6 +155,55 @@ export async function processEtaGraphMessage(
   }
 
   const bodyText = (message.bodyText && message.bodyText.trim()) || (message.bodyHtml ? htmlToText(message.bodyHtml) : "") || message.bodyPreview || "";
+  const userEmail = String(config.MICROSOFT_GRAPH_USER_EMAIL ?? "").trim();
+  const attachments = userEmail ? await deps.listMessageAttachments({ userEmail, messageId: message.id }) : [];
+  const pdfTexts: string[] = [];
+
+  for (const attachment of attachments) {
+    const contentType = String(attachment.contentType ?? "").toLowerCase();
+    const isPdf = contentType === "application/pdf" || attachment.name.toLowerCase().endsWith(".pdf");
+    logger.info("eta_email.attachment_detected", {
+      messageId: message.id,
+      subject: message.subject ?? null,
+      sender: message.sender ?? null,
+      fileName: attachment.name,
+      size: attachment.size ?? null,
+      isPdf
+    });
+    if (!isPdf) continue;
+
+    try {
+      const buffer = await deps.downloadFileAttachment({ userEmail, messageId: message.id, attachmentId: attachment.id });
+      logger.info("eta_email.pdf_attachment_downloaded", {
+        messageId: message.id,
+        fileName: attachment.name,
+        size: attachment.size ?? buffer.byteLength
+      });
+      const text = await deps.extractPdfText(buffer);
+      logger.info("eta_email.pdf_text_extracted", {
+        messageId: message.id,
+        fileName: attachment.name,
+        extractedLength: text.length
+      });
+      if (text.trim()) pdfTexts.push(text.trim());
+    } catch (error) {
+      logger.warn("eta_email.pdf_text_extract_failed", {
+        messageId: message.id,
+        fileName: attachment.name,
+        reason: error instanceof Error ? error.message : String(error)
+      });
+    }
+  }
+
+  const combinedSourceText = [bodyText, ...pdfTexts].filter(Boolean).join("\n\n");
+  logger.info("eta_email.combined_source_prepared", {
+    messageId: message.id,
+    subject: message.subject ?? null,
+    sender: message.sender ?? null,
+    bodyLength: bodyText.length,
+    pdfCount: pdfTexts.length,
+    combinedLength: combinedSourceText.length
+  });
   const ingestion = await deps.createEtaEmailIngestion({
     graphMessageId: message.id,
     internetMessageId: message.internetMessageId ?? null,
@@ -159,17 +221,24 @@ export async function processEtaGraphMessage(
     const extracted = await deps.extractEtaPayloadFromEmail({
       subject: message.subject ?? "",
       sender: message.sender ?? "",
-      bodyText
+      bodyText: combinedSourceText || bodyText
     });
 
     if (!hasEnoughEtaInfo(extracted)) {
+      logger.info("eta_email.no_eta_found", {
+        messageId: message.id,
+        subject: message.subject ?? null,
+        sender: message.sender ?? null,
+        hadBodyText: Boolean(bodyText.trim()),
+        hadPdfText: pdfTexts.length > 0
+      });
       row = await deps.updateEtaEmailIngestion({
         id: row.id,
         extractionStatus: "failed",
         extractedPayload: extracted as unknown as Record<string, unknown>,
         errorMessage: "Extraction missing PO number or ETA/tracking info."
       });
-      return { status: "failed" as const, reason: "insufficient_extraction", row };
+      return { status: "skipped" as const, reason: "no_eta_found", row };
     }
 
     const poNumber = normalizePoNumber(extracted.poNumber);
@@ -229,7 +298,7 @@ export async function processEtaGraphMessage(
       updateScope: "po_all_lines",
       sourceType: "email",
       sourceReference: `${folderName}:${message.id}`,
-      rawNotes: extracted.etaNotes || bodyText,
+      rawNotes: extracted.etaNotes || combinedSourceText || bodyText,
       confidence: extracted.confidence === "HIGH" ? 0.95 : extracted.confidence === "MED" ? 0.8 : 0.7,
       status: "parsed"
     });
@@ -250,7 +319,7 @@ export async function processEtaGraphMessage(
       sender: message.sender ?? null,
       subject: message.subject ?? null,
       sourceReference: `${folderName}:${message.id}`,
-      notes: extracted.etaNotes || bodyText,
+      notes: extracted.etaNotes || combinedSourceText || bodyText,
       itemsSummary
       },
       deps

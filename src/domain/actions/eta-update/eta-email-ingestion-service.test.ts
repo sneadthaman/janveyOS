@@ -7,6 +7,9 @@ function baseDeps(overrides: Record<string, unknown> = {}) {
   return {
     findMailFolderByDisplayName: async () => ({ id: "folder-1", displayName: "AI ETA" }),
     listMessagesInFolder: async () => [],
+    listMessageAttachments: async () => [],
+    downloadFileAttachment: async () => Buffer.from(""),
+    extractPdfText: async () => "",
     findEtaEmailIngestionByGraphMessageId: async () => null,
     createEtaEmailIngestion: async () => ({ id: "ing-1", extracted_payload: null }),
     updateEtaEmailIngestion: async (_input: Record<string, unknown>) => ({ id: "ing-1", extracted_payload: null }),
@@ -80,7 +83,8 @@ test("fails gracefully when no PO number extracted", async () => {
     }) as any
   );
 
-  assert.equal(result.status, "failed");
+  assert.equal(result.status, "skipped");
+  assert.equal((result as { reason?: string }).reason, "no_eta_found");
 });
 
 test("fails gracefully when open PO lookup not found", async () => {
@@ -244,4 +248,135 @@ test("duplicate email ingestion does not create duplicate approval cards when ac
 
   assert.equal(result.status, "approval_created");
   assert.equal(createActionCalls, 0);
+});
+
+test("body-only ETA email still works", async () => {
+  let calls = 0;
+  const result = await processEtaGraphMessage(
+    { id: "m10", subject: "ETA", bodyText: "PO289731 ETA 5/29 tracking PRO123" },
+    "AI ETA",
+    baseDeps({
+      listMessageAttachments: async () => [],
+      extractEtaPayloadFromEmail: async (input: { bodyText: string }) => {
+        calls += 1;
+        assert.match(input.bodyText, /PO289731 ETA 5\/29/);
+        return {
+          poNumber: "PO289731",
+          etaDate: "2026-05-29",
+          trackingNumber: "PRO123",
+          vendorName: "Diversey",
+          items: [],
+          confidence: "HIGH",
+          etaSource: "email",
+          etaNotes: "parsed"
+        };
+      }
+    }) as any
+  );
+  assert.equal(result.status, "approval_created");
+  assert.equal(calls, 1);
+});
+
+test("PDF-only ETA email creates ETA approval", async () => {
+  const result = await processEtaGraphMessage(
+    { id: "m11", subject: "ETA PDF", bodyText: "" },
+    "AI ETA",
+    baseDeps({
+      listMessageAttachments: async () => [{ id: "a1", name: "eta.pdf", contentType: "application/pdf", size: 100 }],
+      downloadFileAttachment: async () => Buffer.from("pdf"),
+      extractPdfText: async () => "PO289731 ETA 5/29 tracking PRO123",
+      extractEtaPayloadFromEmail: async (input: { bodyText: string }) => {
+        assert.match(input.bodyText, /PO289731 ETA 5\/29 tracking PRO123/);
+        return {
+          poNumber: "PO289731",
+          etaDate: "2026-05-29",
+          trackingNumber: "PRO123",
+          vendorName: "Diversey",
+          items: [],
+          confidence: "HIGH",
+          etaSource: "pdf",
+          etaNotes: "parsed from pdf"
+        };
+      }
+    }) as any
+  );
+  assert.equal(result.status, "approval_created");
+});
+
+test("body + PDF combines both sources", async () => {
+  const result = await processEtaGraphMessage(
+    { id: "m12", subject: "ETA mix", bodyText: "from body" },
+    "AI ETA",
+    baseDeps({
+      listMessageAttachments: async () => [{ id: "a1", name: "eta.pdf", contentType: "application/pdf", size: 100 }],
+      downloadFileAttachment: async () => Buffer.from("pdf"),
+      extractPdfText: async () => "PO289731 ETA 5/29",
+      extractEtaPayloadFromEmail: async (input: { bodyText: string }) => {
+        assert.match(input.bodyText, /from body/);
+        assert.match(input.bodyText, /PO289731 ETA 5\/29/);
+        return {
+          poNumber: "PO289731",
+          etaDate: "2026-05-29",
+          trackingNumber: null,
+          vendorName: "Diversey",
+          items: [],
+          confidence: "MED",
+          etaSource: "combined",
+          etaNotes: "combined"
+        };
+      }
+    }) as any
+  );
+  assert.equal(result.status, "approval_created");
+});
+
+test("non-PDF attachment is ignored", async () => {
+  const result = await processEtaGraphMessage(
+    { id: "m13", subject: "ETA non-pdf", bodyText: "PO289731 ETA 5/29" },
+    "AI ETA",
+    baseDeps({
+      listMessageAttachments: async () => [{ id: "a1", name: "notes.txt", contentType: "text/plain", size: 100 }],
+      extractEtaPayloadFromEmail: async (input: { bodyText: string }) => {
+        assert.doesNotMatch(input.bodyText, /notes\.txt/);
+        return {
+          poNumber: "PO289731",
+          etaDate: "2026-05-29",
+          trackingNumber: null,
+          vendorName: "Diversey",
+          items: [],
+          confidence: "MED",
+          etaSource: "email",
+          etaNotes: "body"
+        };
+      }
+    }) as any
+  );
+  assert.equal(result.status, "approval_created");
+});
+
+test("corrupt/unreadable PDF does not crash polling", async () => {
+  const prevEnabled = config.MICROSOFT_GRAPH_ENABLED;
+  const prevUser = config.MICROSOFT_GRAPH_USER_EMAIL;
+  const prevFolder = config.MICROSOFT_GRAPH_AI_ETA_FOLDER_NAME;
+  config.MICROSOFT_GRAPH_ENABLED = true;
+  config.MICROSOFT_GRAPH_USER_EMAIL = "ops@example.com";
+  config.MICROSOFT_GRAPH_AI_ETA_FOLDER_NAME = "AI ETA";
+  try {
+    const summary = await runEtaOutlookIngestionOnce(
+      baseDeps({
+        listMessagesInFolder: async () => [{ id: "m14", subject: "ETA", bodyText: "PO289731 ETA 5/29" }],
+        listMessageAttachments: async () => [{ id: "a1", name: "bad.pdf", contentType: "application/pdf", size: 100 }],
+        downloadFileAttachment: async () => Buffer.from("bad"),
+        extractPdfText: async () => {
+          throw new Error("bad pdf");
+        }
+      }) as any
+    );
+    assert.equal(summary.enabled, true);
+    assert.equal(summary.folderFound, true);
+  } finally {
+    config.MICROSOFT_GRAPH_ENABLED = prevEnabled;
+    config.MICROSOFT_GRAPH_USER_EMAIL = prevUser;
+    config.MICROSOFT_GRAPH_AI_ETA_FOLDER_NAME = prevFolder;
+  }
 });

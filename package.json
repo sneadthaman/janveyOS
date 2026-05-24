@@ -26,6 +26,7 @@
     "test:tool-quote-preview": "tsx scripts/test-tool-quote-preview.ts",
     "test:tool-new-item-draft": "tsx scripts/test-tool-new-item-draft.ts",
     "test:tool-pricing-update-preview": "tsx scripts/test-tool-pricing-update-preview.ts",
+    "eta:dry-run": "tsx scripts/eta-dry-run.ts",
     "dev:reset-quote-to-so": "tsx scripts/dev-reset-quote-to-so.ts",
     "dev:ingest-pdf": "tsx scripts/dev-ingest-pdf.ts",
     "outlook:scan-cust-po": "tsx scripts/outlook-scan-customer-po-folder.ts",

@@ -16,6 +16,14 @@ export interface GraphMailMessage {
   bodyHtml?: string;
 }
 
+export interface GraphMailAttachment {
+  id: string;
+  name: string;
+  contentType: string | null;
+  size: number | null;
+  isInline: boolean;
+}
+
 interface GraphTokenResponse {
   access_token: string;
 }
@@ -76,6 +84,22 @@ async function graphGet(path: string) {
   return json;
 }
 
+async function graphGetBinary(path: string) {
+  const token = await getAccessToken();
+  const response = await fetch(`https://graph.microsoft.com/v1.0${path}`, {
+    method: "GET",
+    headers: {
+      authorization: `Bearer ${token}`
+    }
+  });
+  if (!response.ok) {
+    const body = await response.text().catch(() => "");
+    throw new Error(`Graph binary download failed (${response.status})${body ? `: ${body.slice(0, 120)}` : ""}`);
+  }
+  const buffer = await response.arrayBuffer();
+  return Buffer.from(buffer);
+}
+
 export async function findMailFolderByDisplayName(input: { userEmail: string; folderName: string }): Promise<GraphMailFolder | null> {
   const folderName = input.folderName.trim();
   if (!folderName) return null;
@@ -125,4 +149,29 @@ export async function listMessagesInFolder(input: {
       } satisfies GraphMailMessage;
     })
     .filter((message) => message.id.length > 0);
+}
+
+export async function listMessageAttachments(input: { userEmail: string; messageId: string }): Promise<GraphMailAttachment[]> {
+  const select = encodeURIComponent("id,name,contentType,size,isInline");
+  const data = await graphGet(
+    `/users/${encodeURIComponent(input.userEmail)}/messages/${encodeURIComponent(input.messageId)}/attachments?$top=200&$select=${select}`
+  );
+  const value = Array.isArray(data.value) ? data.value : [];
+
+  return value
+    .filter((item): item is Record<string, unknown> => Boolean(item && typeof item === "object"))
+    .map((item) => ({
+      id: String(item.id ?? ""),
+      name: String(item.name ?? "").trim(),
+      contentType: typeof item.contentType === "string" ? item.contentType : null,
+      size: typeof item.size === "number" ? item.size : item.size ? Number(item.size) : null,
+      isInline: Boolean(item.isInline)
+    }))
+    .filter((item) => item.id.length > 0 && item.name.length > 0);
+}
+
+export async function downloadFileAttachment(input: { userEmail: string; messageId: string; attachmentId: string }): Promise<Buffer> {
+  return graphGetBinary(
+    `/users/${encodeURIComponent(input.userEmail)}/messages/${encodeURIComponent(input.messageId)}/attachments/${encodeURIComponent(input.attachmentId)}/$value`
+  );
 }
