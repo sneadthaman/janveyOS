@@ -287,10 +287,27 @@ export async function handleEtaUpdateApprovalAction(input: {
       });
       const inputJson = (existing.input_json ?? {}) as Record<string, unknown>;
       const channel = String(inputJson.slack_channel_id ?? "").trim();
-      if (!channel) return;
+      const output = run.ok && run.result && typeof run.result === "object" ? (run.result as Record<string, unknown>) : null;
+      const rawExecutionStatus = String(output?.executionStatus ?? (run.ok ? "success" : "failed")).trim().toLowerCase();
+      const successStatuses = new Set(["success", "executed", "applied"]);
+      const failureStatuses = new Set(["failed", "error"]);
+      let isSuccess = successStatuses.has(rawExecutionStatus);
+      if (!successStatuses.has(rawExecutionStatus) && !failureStatuses.has(rawExecutionStatus)) {
+        logger.info("eta_update.slack_completion_update.unhandled_status", {
+          actionRequestId: approved.id,
+          po: parsed.poNumber ?? (String(existing.input_json?.po_number ?? "").trim() || null),
+          slackChannelId: input.slackChannelId ?? null,
+          slackMessageTs: input.slackMessageTs ?? null,
+          executionStatus: rawExecutionStatus,
+          hasOutputJson: Boolean(output)
+        });
+        isSuccess = run.ok;
+      } else if (failureStatuses.has(rawExecutionStatus)) {
+        isSuccess = false;
+      }
 
-      if (run.ok) {
-        const output = run.result as Record<string, unknown>;
+      if (isSuccess) {
+        const output = (run.result as Record<string, unknown>) ?? {};
         const poNumber = String(output.poNumber ?? parsed.poNumber ?? inputJson.po_number ?? "").trim() || parsed.poNumber || "-";
         const etaDate = String(output.etaDate ?? parsed.etaDate ?? inputJson.eta_date ?? "").trim() || parsed.etaDate || "-";
         const confidence = String(
@@ -360,14 +377,16 @@ export async function handleEtaUpdateApprovalAction(input: {
           status: "success",
           po: poNumber
         });
-        await deps.postSlackMessage({
-          channel,
-          text:
-            `✅ ETA update applied.\n` +
-            `PO: ${poNumber}\n` +
-            `ETA: ${etaDate}\n` +
-            `Request: ${approved.id}`
-        });
+        if (channel) {
+          await deps.postSlackMessage({
+            channel,
+            text:
+              `✅ ETA update applied.\n` +
+              `PO: ${poNumber}\n` +
+              `ETA: ${etaDate}\n` +
+              `Request: ${approved.id}`
+          });
+        }
         return;
       }
 
@@ -421,10 +440,12 @@ export async function handleEtaUpdateApprovalAction(input: {
         status: "failed",
         po: poNumber
       });
-      await deps.postSlackMessage({
-        channel,
-        text: `❌ ETA update failed.\nRequest: ${approved.id}\nReason: ${safeError}`
-      });
+      if (channel) {
+        await deps.postSlackMessage({
+          channel,
+          text: `❌ ETA update failed.\nRequest: ${approved.id}\nReason: ${safeError}`
+        });
+      }
     })().catch(async (error) => {
       logger.error("eta_update.slack.approval.execute_async_failed", error);
       try {

@@ -137,6 +137,7 @@ test("successful approve updates Slack from applying to completed with final det
         ({
           ok: true,
           result: {
+            executionStatus: "success",
             poNumber: "PO289807",
             etaDate: "2026-06-03",
             etaConfidence: "HIGH",
