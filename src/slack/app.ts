@@ -329,7 +329,7 @@ export function createSlackApp() {
     if (say && result.message.trim().length > 0) await say(result.message);
   });
 
-  app.action("eta_update_approve_request", async ({ ack, action, body, respond, say }) => {
+  app.action("eta_update_approve_request", async ({ ack, action, body, respond }) => {
     await ack();
     if (!("user" in body)) return;
     const actionValue = "value" in action && typeof action.value === "string" ? action.value : "";
@@ -344,10 +344,9 @@ export function createSlackApp() {
       if (respond) await respond({ response_type: "ephemeral", text: result.message });
       return;
     }
-    if (say) await say(result.message);
   });
 
-  app.action("eta_update_reject_request", async ({ ack, action, body, respond, say }) => {
+  app.action("eta_update_reject_request", async ({ ack, action, body, respond }) => {
     await ack();
     if (!("user" in body)) return;
     const actionValue = "value" in action && typeof action.value === "string" ? action.value : "";
@@ -362,10 +361,9 @@ export function createSlackApp() {
       if (respond) await respond({ response_type: "ephemeral", text: result.message });
       return;
     }
-    if (say) await say(result.message);
   });
 
-  app.action("eta_update_cancel_request", async ({ ack, action, body, respond, say }) => {
+  app.action("eta_update_cancel_request", async ({ ack, action, body, respond }) => {
     await ack();
     if (!("user" in body)) return;
     const actionValue = "value" in action && typeof action.value === "string" ? action.value : "";
@@ -380,7 +378,6 @@ export function createSlackApp() {
       if (respond) await respond({ response_type: "ephemeral", text: result.message });
       return;
     }
-    if (say) await say(result.message);
   });
 
   return app;
