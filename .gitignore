@@ -4,3 +4,5 @@ dist
 .DS_Store
 coverage
 *.log
+fixtures/pdfs/*
+!fixtures/pdfs/.gitkeep
