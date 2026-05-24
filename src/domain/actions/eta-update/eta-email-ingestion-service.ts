@@ -174,7 +174,17 @@ export async function processEtaGraphMessage(
     const poLookupPayload = { po: poNumber };
     logger.info("eta_email_ingestion.po_lookup.request", poLookupPayload);
     const poLookup = await deps.lookupOpenPurchaseOrder(poLookupPayload);
-    if (!poLookup.success) {
+    const poLookupSuccess =
+      poLookup.success === true ||
+      ((poLookup as unknown as Record<string, unknown>).status === true &&
+        (poLookup as unknown as Record<string, unknown>).data &&
+        typeof (poLookup as unknown as Record<string, unknown>).data === "object");
+    const poLookupData =
+      poLookupSuccess && (poLookup as unknown as Record<string, unknown>).status === true
+        ? (((poLookup as unknown as Record<string, unknown>).data as Record<string, unknown> | undefined) ?? {})
+        : {};
+
+    if (!poLookupSuccess) {
       row = await deps.updateEtaEmailIngestion({
         id: row.id,
         extractionStatus: "failed",
@@ -198,9 +208,10 @@ export async function processEtaGraphMessage(
     });
 
     const etaUpdate = await deps.createEtaUpdate({
-      vendorName: extracted.vendorName ?? poLookup.vendorName ?? "Unknown",
+      vendorName: extracted.vendorName ?? poLookup.vendorName ?? (typeof poLookupData.vendorName === "string" ? poLookupData.vendorName : "Unknown"),
       poNumber,
-      netsuitePoInternalId: poLookup.poInternalId ?? null,
+      netsuitePoInternalId:
+        poLookup.poInternalId ?? (typeof poLookupData.poInternalId === "string" ? poLookupData.poInternalId : null),
       etaDate: extracted.etaDate,
       trackingNumber: extracted.trackingNumber,
       updateScope: "po_all_lines",

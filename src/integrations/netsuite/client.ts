@@ -604,12 +604,14 @@ function asBoolean(value: unknown): boolean | undefined {
 }
 
 function normalizeOpenPoLookupResponse(raw: Record<string, unknown>): OpenPurchaseOrderLookupResult {
-  const linesRaw = Array.isArray(raw.lines)
-    ? raw.lines
-    : Array.isArray(raw.items)
-      ? raw.items
-      : Array.isArray(raw.po_lines)
-        ? raw.po_lines
+  const payload =
+    raw.data && typeof raw.data === "object" && !Array.isArray(raw.data) ? (raw.data as Record<string, unknown>) : raw;
+  const linesRaw = Array.isArray(payload.lines)
+    ? payload.lines
+    : Array.isArray(payload.items)
+      ? payload.items
+      : Array.isArray(payload.po_lines)
+        ? payload.po_lines
         : [];
   const lines = linesRaw
     .filter((line): line is Record<string, unknown> => Boolean(line && typeof line === "object" && !Array.isArray(line)))
@@ -656,34 +658,49 @@ function normalizeOpenPoLookupResponse(raw: Record<string, unknown>): OpenPurcha
     }));
 
   return {
-    success: raw.success === true,
+    success: raw.success === true || raw.status === true || payload.success === true,
     poInternalId:
-      typeof raw.poInternalId === "string"
-        ? raw.poInternalId
-        : typeof raw.po_internal_id === "string"
-          ? raw.po_internal_id
+      typeof payload.poInternalId === "string"
+        ? payload.poInternalId
+        : typeof payload.po_internal_id === "string"
+          ? payload.po_internal_id
           : undefined,
     tranId:
-      typeof raw.tranId === "string"
-        ? raw.tranId
-        : typeof raw.tranid === "string"
-          ? raw.tranid
-          : typeof raw.poNumber === "string"
-            ? raw.poNumber
-            : typeof raw.po_number === "string"
-              ? raw.po_number
+      typeof payload.tranId === "string"
+        ? payload.tranId
+        : typeof payload.tranid === "string"
+          ? payload.tranid
+          : typeof payload.poNumber === "string"
+            ? payload.poNumber
+            : typeof payload.po_number === "string"
+              ? payload.po_number
               : undefined,
     vendorName:
-      typeof raw.vendorName === "string"
-        ? raw.vendorName
-        : typeof raw.vendor_name === "string"
-          ? raw.vendor_name
+      typeof payload.vendorName === "string"
+        ? payload.vendorName
+        : typeof payload.vendor_name === "string"
+          ? payload.vendor_name
           : undefined,
-    status: typeof raw.status === "string" ? raw.status : undefined,
+    status:
+      typeof payload.status === "string"
+        ? payload.status
+        : typeof raw.status === "string"
+          ? raw.status
+          : undefined,
     lines,
-    code: typeof raw.code === "string" ? raw.code : undefined,
-    message: typeof raw.message === "string" ? raw.message : undefined,
-    details: raw.details
+    code:
+      typeof payload.code === "string"
+        ? payload.code
+        : typeof raw.code === "string"
+          ? raw.code
+          : undefined,
+    message:
+      typeof raw.message === "string"
+        ? raw.message
+        : typeof payload.message === "string"
+          ? payload.message
+          : undefined,
+    details: payload.details ?? raw.details
   };
 }
 

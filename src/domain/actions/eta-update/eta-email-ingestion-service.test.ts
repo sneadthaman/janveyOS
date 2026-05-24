@@ -119,6 +119,49 @@ test("creates approval request when extraction and lookup succeed", async () => 
   assert.equal(createdRequest, 1);
 });
 
+test("ingestion proceeds when PO lookup returns RESTlet status/data schema", async () => {
+  let createdRequest = 0;
+  const result = await processEtaGraphMessage(
+    {
+      id: "m8",
+      subject: "ETA",
+      bodyText: "PO289807 ETA 6/2"
+    },
+    "AI ETA",
+    baseDeps({
+      extractEtaPayloadFromEmail: async () => ({
+        poNumber: "PO289807",
+        etaDate: "2026-06-02",
+        trackingNumber: null,
+        vendorName: "Diversey",
+        items: [],
+        confidence: "HIGH",
+        etaSource: "email",
+        etaNotes: "note"
+      }),
+      lookupOpenPurchaseOrder: async () =>
+        ({
+          status: true,
+          message: "Open PO found",
+          data: {
+            poInternalId: "9002",
+            tranId: "PO289807",
+            vendorName: "Diversey",
+            status: "Pending Receipt",
+            lines: []
+          }
+        }) as any,
+      createAgentActionRequest: async () => {
+        createdRequest += 1;
+        return "req-eta-3";
+      }
+    }) as any
+  );
+
+  assert.equal(result.status, "approval_created");
+  assert.equal(createdRequest, 1);
+});
+
 test("PO lookup validation sends payload as { po: extracted.poNumber }", async () => {
   let capturedPayload: Record<string, unknown> | null = null;
   await processEtaGraphMessage(
