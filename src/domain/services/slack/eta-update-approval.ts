@@ -123,6 +123,7 @@ export function buildEtaUpdateApprovalBlocks(input: {
   sender?: string | null;
   subject?: string | null;
   confidence?: string | null;
+  etaSource?: string | null;
   sourceFolder?: string | null;
   proposedAffectedLines?: string | null;
   notes?: string | null;
@@ -153,6 +154,7 @@ export function buildEtaUpdateApprovalBlocks(input: {
           `• Sender: ${input.sender || "-"}\n` +
           `• Subject: ${input.subject || "-"}\n` +
           `• Confidence: ${input.confidence || "-"}\n` +
+          `• ETA source: ${input.etaSource || "vendor_provided_or_unknown"}\n` +
           `• Source folder: ${input.sourceFolder || "AI ETA"}\n` +
           `• Proposed affected lines: ${input.proposedAffectedLines || "-"}\n` +
           `• Notes: ${input.notes || "-"}\n` +
@@ -201,6 +203,7 @@ export async function notifyEtaUpdateApprovalRequested(input: {
   sender?: string | null;
   subject?: string | null;
   confidence?: string | null;
+  etaSource?: string | null;
   sourceFolder?: string | null;
   proposedAffectedLines?: string | null;
   notes?: string | null;

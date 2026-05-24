@@ -95,6 +95,7 @@ async function createApprovalForEta(input: {
   etaDate: string | null;
   trackingNumber: string | null;
   confidence: string;
+  etaSource: string;
   sender: string | null;
   subject: string | null;
   sourceReference: string;
@@ -125,6 +126,7 @@ async function createApprovalForEta(input: {
       email_sender: input.sender,
       email_subject: input.subject,
       extraction_confidence: input.confidence,
+      eta_source: input.etaSource,
       proposed_affected_lines: input.itemsSummary,
       graph_message_id: input.graphMessageId
     },
@@ -133,6 +135,7 @@ async function createApprovalForEta(input: {
       po_number: input.poNumber,
       eta_date: input.etaDate,
       tracking_number: input.trackingNumber,
+      eta_source: input.etaSource,
       source_folder: config.MICROSOFT_GRAPH_AI_ETA_FOLDER_NAME || "AI ETA",
       graph_message_id: input.graphMessageId
     },
@@ -142,6 +145,106 @@ async function createApprovalForEta(input: {
   await deps.attachActionRequestToEtaUpdate(input.etaUpdateId, actionRequestId);
 
   return actionRequestId;
+}
+
+function parseLabeledDate(text: string, labelRegex: RegExp): string | null {
+  const match = text.match(labelRegex);
+  if (!match?.[1]) return null;
+  const raw = match[1].trim();
+  const short = raw.match(/(\d{1,2})[\/-](\d{1,2})(?:[\/-](\d{2,4}))?/);
+  if (short) {
+    const m = Number(short[1]);
+    const d = Number(short[2]);
+    let y = short[3] ? Number(short[3]) : new Date().getFullYear();
+    if (y < 100) y += 2000;
+    return `${String(y).padStart(4, "0")}-${String(m).padStart(2, "0")}-${String(d).padStart(2, "0")}`;
+  }
+  const month = raw.match(
+    /(Jan|January|Feb|February|Mar|March|Apr|April|May|Jun|June|Jul|July|Aug|August|Sep|Sept|September|Oct|October|Nov|November|Dec|December)\s+(\d{1,2})(?:,\s*(\d{4}))?/i
+  );
+  if (!month) return null;
+  const mm: Record<string, number> = {
+    jan: 1, january: 1, feb: 2, february: 2, mar: 3, march: 3, apr: 4, april: 4, may: 5, jun: 6, june: 6, jul: 7, july: 7, aug: 8, august: 8, sep: 9, sept: 9, september: 9, oct: 10, october: 10, nov: 11, november: 11, dec: 12, december: 12
+  };
+  const m = mm[month[1].toLowerCase()];
+  const d = Number(month[2]);
+  const y = month[3] ? Number(month[3]) : new Date().getFullYear();
+  return `${String(y).padStart(4, "0")}-${String(m).padStart(2, "0")}-${String(d).padStart(2, "0")}`;
+}
+
+function addDays(isoDate: string, days: number): string {
+  const [y, m, d] = isoDate.split("-").map(Number);
+  const dt = new Date(Date.UTC(y, m - 1, d));
+  dt.setUTCDate(dt.getUTCDate() + days);
+  return `${dt.getUTCFullYear().toString().padStart(4, "0")}-${(dt.getUTCMonth() + 1).toString().padStart(2, "0")}-${dt.getUTCDate().toString().padStart(2, "0")}`;
+}
+
+function isSssVendorContext(input: { sender: string; subject: string; body: string; vendorName: string | null }) {
+  const combined = `${input.sender}\n${input.subject}\n${input.body}\n${input.vendorName ?? ""}`.toLowerCase();
+  return combined.includes("triple s") || /\bsss\b/i.test(combined) || combined.includes("standardized sanitation systems");
+}
+
+function applySssAssumedEta(input: {
+  sender: string;
+  subject: string;
+  combinedSourceText: string;
+  extracted: Awaited<ReturnType<typeof extractEtaPayloadFromEmail>>;
+}) {
+  const isSss = isSssVendorContext({
+    sender: input.sender,
+    subject: input.subject,
+    body: input.combinedSourceText,
+    vendorName: input.extracted.vendorName
+  });
+  if (!isSss) return input.extracted;
+
+  const invoiceDate =
+    parseLabeledDate(input.combinedSourceText, /\bInvoice\s*Date\s*:?\s*([A-Za-z0-9,\/ -]+)/i) ??
+    parseLabeledDate(input.combinedSourceText, /\bInv\s*Date\s*:?\s*([A-Za-z0-9,\/ -]+)/i) ??
+    parseLabeledDate(input.combinedSourceText, /\bDate\s*:?\s*([A-Za-z0-9,\/ -]+)/i);
+
+  if (invoiceDate) {
+    logger.info("eta_email.sss_invoice_date_detected", {
+      sender: input.sender || null,
+      subject: input.subject || null,
+      invoiceDate
+    });
+  }
+
+  if (input.extracted.etaDate) {
+    logger.info("eta_email.sss_assumed_eta_skipped", {
+      reason: "explicit_eta_present",
+      etaDate: input.extracted.etaDate,
+      invoiceDate: invoiceDate ?? null
+    });
+    return input.extracted;
+  }
+
+  if (!invoiceDate) {
+    logger.info("eta_email.sss_assumed_eta_skipped", {
+      reason: "missing_invoice_date"
+    });
+    return input.extracted;
+  }
+
+  const assumedEta = addDays(invoiceDate, 4);
+  logger.info("eta_email.sss_assumed_eta_applied", {
+    invoiceDate,
+    assumedEta
+  });
+
+  return {
+    ...input.extracted,
+    etaDate: assumedEta,
+    etaSource: "sss_invoice_date_plus_4_days",
+    etaNotes: [
+      input.extracted.etaNotes || "",
+      "Assumed ETA calculated from SSS invoice date + 4 calendar days."
+    ]
+      .filter(Boolean)
+      .join(" ")
+      .trim()
+  };
 }
 
 export async function processEtaGraphMessage(
@@ -218,10 +321,16 @@ export async function processEtaGraphMessage(
 
   let row: EtaEmailIngestionRow = ingestion;
   try {
-    const extracted = await deps.extractEtaPayloadFromEmail({
+    const extractedRaw = await deps.extractEtaPayloadFromEmail({
       subject: message.subject ?? "",
       sender: message.sender ?? "",
       bodyText: combinedSourceText || bodyText
+    });
+    const extracted = applySssAssumedEta({
+      sender: message.sender ?? "",
+      subject: message.subject ?? "",
+      combinedSourceText: combinedSourceText || bodyText,
+      extracted: extractedRaw
     });
 
     if (!hasEnoughEtaInfo(extracted)) {
@@ -316,6 +425,7 @@ export async function processEtaGraphMessage(
       etaDate: etaUpdate.etaDate,
       trackingNumber: etaUpdate.trackingNumber,
       confidence: extracted.confidence,
+      etaSource: extracted.etaSource,
       sender: message.sender ?? null,
       subject: message.subject ?? null,
       sourceReference: `${folderName}:${message.id}`,
@@ -352,6 +462,7 @@ export async function processEtaGraphMessage(
       sender: message.sender ?? null,
       subject: message.subject ?? null,
       confidence: extracted.confidence,
+      etaSource: extracted.etaSource,
       sourceFolder: folderName,
       proposedAffectedLines: itemsSummary || null,
       notes: extracted.etaNotes || null

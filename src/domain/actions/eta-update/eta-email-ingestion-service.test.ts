@@ -380,3 +380,154 @@ test("corrupt/unreadable PDF does not crash polling", async () => {
     config.MICROSOFT_GRAPH_AI_ETA_FOLDER_NAME = prevFolder;
   }
 });
+
+test("SSS PDF with invoice date and no ETA derives invoice date + 4 days", async () => {
+  let capturedEtaDate: string | null = null;
+  let capturedEtaSource: string | null = null;
+  let capturedNotes: string | null = null;
+  const result = await processEtaGraphMessage(
+    { id: "m15", subject: "Triple S Invoice", sender: "ap@triple-s.com", bodyText: "" },
+    "AI ETA",
+    baseDeps({
+      listMessageAttachments: async () => [{ id: "a1", name: "inv.pdf", contentType: "application/pdf", size: 100 }],
+      downloadFileAttachment: async () => Buffer.from("pdf"),
+      extractPdfText: async () => "Invoice Date 5/21/2026 PO289798",
+      extractEtaPayloadFromEmail: async () => ({
+        poNumber: "PO289798",
+        etaDate: null,
+        trackingNumber: null,
+        vendorName: "Triple S",
+        items: [],
+        confidence: "MED",
+        etaSource: "email",
+        etaNotes: ""
+      }),
+      createEtaUpdate: async (input: { etaDate: string | null; rawNotes: string | null }) => {
+        capturedEtaDate = input.etaDate;
+        capturedNotes = input.rawNotes;
+        return {
+          id: "eta-1",
+          vendorName: "Triple S",
+          poNumber: "PO289798",
+          netsuitePoInternalId: "9001",
+          itemNumber: null,
+          netsuiteItemInternalId: null,
+          etaDate: input.etaDate,
+          trackingNumber: null,
+          updateScope: "po_all_lines",
+          sourceType: "email",
+          sourceReference: null,
+          rawNotes: input.rawNotes,
+          confidence: 0.8,
+          status: "parsed",
+          createdActionRequestId: null,
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString()
+        } as any;
+      },
+      createAgentActionRequest: async (input: { inputJson: Record<string, unknown> }) => {
+        capturedEtaSource = String(input.inputJson.eta_source ?? "");
+        return "req-sss";
+      }
+    }) as any
+  );
+  assert.equal(result.status, "approval_created");
+  assert.equal(capturedEtaDate, "2026-05-25");
+  assert.equal(capturedEtaSource, "sss_invoice_date_plus_4_days");
+  assert.match(String(capturedNotes), /Assumed ETA calculated from SSS invoice date \+ 4 calendar days\./);
+});
+
+test("SSS PDF with explicit ETA keeps explicit ETA", async () => {
+  let capturedEtaDate: string | null = null;
+  const result = await processEtaGraphMessage(
+    { id: "m16", subject: "Triple S ETA", sender: "ap@triple-s.com", bodyText: "" },
+    "AI ETA",
+    baseDeps({
+      listMessageAttachments: async () => [{ id: "a1", name: "eta.pdf", contentType: "application/pdf", size: 100 }],
+      downloadFileAttachment: async () => Buffer.from("pdf"),
+      extractPdfText: async () => "Invoice Date 5/21/2026",
+      extractEtaPayloadFromEmail: async () => ({
+        poNumber: "PO289798",
+        etaDate: "2026-05-30",
+        trackingNumber: null,
+        vendorName: "Triple S",
+        items: [],
+        confidence: "HIGH",
+        etaSource: "vendor_email",
+        etaNotes: "explicit"
+      }),
+      createEtaUpdate: async (input: { etaDate: string | null }) => {
+        capturedEtaDate = input.etaDate;
+        return {
+          id: "eta-1",
+          vendorName: "Triple S",
+          poNumber: "PO289798",
+          netsuitePoInternalId: "9001",
+          itemNumber: null,
+          netsuiteItemInternalId: null,
+          etaDate: input.etaDate,
+          trackingNumber: null,
+          updateScope: "po_all_lines",
+          sourceType: "email",
+          sourceReference: null,
+          rawNotes: null,
+          confidence: 0.8,
+          status: "parsed",
+          createdActionRequestId: null,
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString()
+        } as any;
+      }
+    }) as any
+  );
+  assert.equal(result.status, "approval_created");
+  assert.equal(capturedEtaDate, "2026-05-30");
+});
+
+test("non-SSS invoice date does not derive ETA", async () => {
+  const result = await processEtaGraphMessage(
+    { id: "m17", subject: "Invoice", sender: "vendor@example.com", bodyText: "" },
+    "AI ETA",
+    baseDeps({
+      listMessageAttachments: async () => [{ id: "a1", name: "inv.pdf", contentType: "application/pdf", size: 100 }],
+      downloadFileAttachment: async () => Buffer.from("pdf"),
+      extractPdfText: async () => "Invoice Date 5/21/2026",
+      extractEtaPayloadFromEmail: async () => ({
+        poNumber: "PO289798",
+        etaDate: null,
+        trackingNumber: null,
+        vendorName: "Other Vendor",
+        items: [],
+        confidence: "LOW",
+        etaSource: "email",
+        etaNotes: ""
+      })
+    }) as any
+  );
+  assert.equal(result.status, "skipped");
+  assert.equal((result as { reason?: string }).reason, "no_eta_found");
+});
+
+test("SSS PDF with no invoice date does not crash and leaves ETA missing", async () => {
+  const result = await processEtaGraphMessage(
+    { id: "m18", subject: "Triple S Invoice", sender: "ap@triple-s.com", bodyText: "" },
+    "AI ETA",
+    baseDeps({
+      listMessageAttachments: async () => [{ id: "a1", name: "inv.pdf", contentType: "application/pdf", size: 100 }],
+      downloadFileAttachment: async () => Buffer.from("pdf"),
+      extractPdfText: async () => "PO289798 no date here",
+      extractEtaPayloadFromEmail: async () => ({
+        poNumber: "PO289798",
+        etaDate: null,
+        trackingNumber: null,
+        vendorName: "Triple S",
+        items: [],
+        confidence: "LOW",
+        etaSource: "email",
+        etaNotes: ""
+      })
+    }) as any
+  );
+  assert.equal(result.status, "skipped");
+  assert.equal((result as { reason?: string }).reason, "no_eta_found");
+});
