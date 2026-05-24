@@ -122,6 +122,7 @@ export function createSlackApp() {
         slackUserId: message.user,
         slackChannelId: message.channel,
         slackMessageTs: typeof message.ts === "string" ? message.ts : undefined,
+        threadTs: "thread_ts" in message && typeof message.thread_ts === "string" ? message.thread_ts : undefined,
         reply: async (out) => {
           await say(out);
         }
@@ -180,6 +181,7 @@ export function createSlackApp() {
         slackUserId: event.user,
         slackChannelId: event.channel,
         slackMessageTs: event.ts,
+        threadTs: "thread_ts" in event && typeof event.thread_ts === "string" ? event.thread_ts : undefined,
         reply: async (out) => {
           await say(out);
         }
