@@ -121,3 +121,78 @@ test("slack approval-style execution path calls updatePurchaseOrderEta when env 
     config.NETSUITE_PO_ETA_UPDATE_RESTLET_URL = prevConfig;
   }
 });
+
+test("successful approve updates Slack from applying to completed with final details and no buttons", async () => {
+  const updates: Array<{ text: string; blocks?: Array<Record<string, unknown>> }> = [];
+  await handleEtaUpdateApprovalAction(
+    {
+      actionId: "eta_update_approve_request",
+      actorSlackUserId: "U-ADMIN",
+      slackChannelId: "C1",
+      slackMessageTs: "123.456",
+      value: JSON.stringify({ actionRequestId: "req-eta-1", etaUpdateId: "eta-1", poNumber: "PO289807", etaDate: "2026-06-03" })
+    },
+    deps({
+      executeClaimedActionRequest: async () =>
+        ({
+          ok: true,
+          result: {
+            poNumber: "PO289807",
+            etaDate: "2026-06-03",
+            etaConfidence: "HIGH",
+            linesUpdated: 2,
+            netsuiteResponse: { message: "ETA updated on PO." }
+          }
+        }) as any,
+      updateSlackMessage: async (payload: { text: string; blocks?: Array<Record<string, unknown>> }) => {
+        updates.push(payload);
+      }
+    }) as any
+  );
+
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  assert.equal(updates.length >= 2, true);
+  assert.equal(updates[0]?.text, "⏳ Running");
+  const finalUpdate = updates[updates.length - 1];
+  assert.equal(finalUpdate?.text, "✅ ETA update applied");
+  const finalText = String(finalUpdate?.blocks?.[0]?.text && typeof finalUpdate.blocks[0].text === "object" ? (finalUpdate.blocks[0].text as Record<string, unknown>).text : "");
+  assert.match(finalText, /ETA update applied/i);
+  assert.match(finalText, /PO289807/);
+  assert.match(finalText, /2026-06-03/);
+  assert.match(finalText, /HIGH/);
+  assert.match(finalText, /Updated line count: 2/);
+  assert.match(finalText, /ETA updated on PO\./);
+  const hasActionsBlock = (finalUpdate?.blocks ?? []).some((b) => b.type === "actions");
+  assert.equal(hasActionsBlock, false);
+});
+
+test("failed approve updates Slack from applying to failed and shows no NetSuite changes", async () => {
+  const updates: Array<{ text: string; blocks?: Array<Record<string, unknown>> }> = [];
+  await handleEtaUpdateApprovalAction(
+    {
+      actionId: "eta_update_approve_request",
+      actorSlackUserId: "U-ADMIN",
+      slackChannelId: "C1",
+      slackMessageTs: "123.456",
+      value: JSON.stringify({ actionRequestId: "req-eta-1", etaUpdateId: "eta-1", poNumber: "PO289807", etaDate: "2026-06-03" })
+    },
+    deps({
+      executeClaimedActionRequest: async () => ({ ok: false, errorMessage: "safe eta failure" }) as any,
+      updateSlackMessage: async (payload: { text: string; blocks?: Array<Record<string, unknown>> }) => {
+        updates.push(payload);
+      }
+    }) as any
+  );
+
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  assert.equal(updates.length >= 2, true);
+  const finalUpdate = updates[updates.length - 1];
+  assert.equal(finalUpdate?.text, "❌ ETA update failed");
+  const finalText = String(finalUpdate?.blocks?.[0]?.text && typeof finalUpdate.blocks[0].text === "object" ? (finalUpdate.blocks[0].text as Record<string, unknown>).text : "");
+  assert.match(finalText, /ETA update failed/i);
+  assert.match(finalText, /PO289807/);
+  assert.match(finalText, /safe eta failure/);
+  assert.match(finalText, /No NetSuite changes were applied/i);
+  const hasActionsBlock = (finalUpdate?.blocks ?? []).some((b) => b.type === "actions");
+  assert.equal(hasActionsBlock, false);
+});
