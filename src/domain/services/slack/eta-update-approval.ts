@@ -1,4 +1,5 @@
 import { logger } from "../../../shared/logger.js";
+import { config } from "../../../shared/config.js";
 import {
   approveAgentActionRequest,
   cancelAgentActionRequest,
@@ -218,6 +219,10 @@ export async function handleEtaUpdateApprovalAction(input: {
     }
 
     void (async () => {
+      logger.info("eta_update.approval_env_check", {
+        hasPoEtaUpdateUrl: Boolean(process.env.NETSUITE_PO_ETA_UPDATE_RESTLET_URL),
+        hasPoEtaUpdateUrlInConfig: Boolean(config.NETSUITE_PO_ETA_UPDATE_RESTLET_URL)
+      });
       const run = await deps.executeClaimedActionRequest(claimed, `slack-approval-${input.actorSlackUserId}`, {
         suppressSlackCompletionNotification: true
       });

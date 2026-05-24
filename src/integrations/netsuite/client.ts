@@ -224,6 +224,14 @@ function buildNetSuiteAuthorizationHeader(url: string) {
   return buildOAuthAuthorizationHeader(url);
 }
 
+function getPoEtaUpdateRestletUrl() {
+  const runtime = typeof process.env.NETSUITE_PO_ETA_UPDATE_RESTLET_URL === "string"
+    ? process.env.NETSUITE_PO_ETA_UPDATE_RESTLET_URL.trim()
+    : "";
+  if (runtime) return runtime;
+  return config.NETSUITE_PO_ETA_UPDATE_RESTLET_URL;
+}
+
 function parseJsonObject(text: string) {
   const parsed = JSON.parse(text || "{}") as unknown;
   if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
@@ -786,7 +794,8 @@ export async function lookupOpenPurchaseOrder(input: { po: string }): Promise<Op
 }
 
 export async function updatePurchaseOrderEta(input: UpdatePurchaseOrderEtaInput): Promise<UpdatePurchaseOrderEtaResult> {
-  if (!config.NETSUITE_PO_ETA_UPDATE_RESTLET_URL) {
+  const restletUrl = getPoEtaUpdateRestletUrl();
+  if (!restletUrl) {
     return {
       success: false,
       code: "CONFIG_ERROR",
@@ -798,7 +807,7 @@ export async function updatePurchaseOrderEta(input: UpdatePurchaseOrderEtaInput)
     "content-type": "application/json",
     accept: "application/json"
   };
-  const authHeader = buildNetSuiteAuthorizationHeader(config.NETSUITE_PO_ETA_UPDATE_RESTLET_URL);
+  const authHeader = buildNetSuiteAuthorizationHeader(restletUrl);
   if (authHeader) headers.authorization = authHeader;
 
   const body: Record<string, unknown> = {
@@ -813,7 +822,7 @@ export async function updatePurchaseOrderEta(input: UpdatePurchaseOrderEtaInput)
   if (input.items && input.items.length > 0) body.items = input.items;
 
   console.log("[netsuite] updatePurchaseOrderEta start", {
-    hasRestletUrl: Boolean(config.NETSUITE_PO_ETA_UPDATE_RESTLET_URL),
+    hasRestletUrl: Boolean(restletUrl),
     hasAuthHeader: Boolean(headers.authorization),
     po: input.po,
     etaDate: input.etaDate,
@@ -823,7 +832,7 @@ export async function updatePurchaseOrderEta(input: UpdatePurchaseOrderEtaInput)
   });
 
   try {
-    const response = await fetch(config.NETSUITE_PO_ETA_UPDATE_RESTLET_URL, {
+    const response = await fetch(restletUrl, {
       method: "POST",
       headers,
       body: JSON.stringify(body)

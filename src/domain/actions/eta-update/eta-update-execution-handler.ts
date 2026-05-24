@@ -9,6 +9,13 @@ function pickString(value: unknown) {
   return v.length > 0 ? v : undefined;
 }
 
+function hasPoEtaUpdateRestletUrlConfigured() {
+  const runtime = typeof process.env.NETSUITE_PO_ETA_UPDATE_RESTLET_URL === "string"
+    ? process.env.NETSUITE_PO_ETA_UPDATE_RESTLET_URL.trim()
+    : "";
+  return Boolean(runtime || config.NETSUITE_PO_ETA_UPDATE_RESTLET_URL);
+}
+
 export async function runEtaUpdateExecutionHandler(payload: Record<string, unknown>) {
   return runEtaUpdateExecutionHandlerWithDeps(payload, {
     updatePurchaseOrderEta,
@@ -43,7 +50,7 @@ export async function runEtaUpdateExecutionHandlerWithDeps(
     throw new NonRetryableActionError("Either netsuite_po_internal_id or po_number is required for eta_update execution.");
   }
 
-  if (!config.NETSUITE_PO_ETA_UPDATE_RESTLET_URL) {
+  if (!hasPoEtaUpdateRestletUrlConfigured()) {
     await deps.markEtaUpdateStatus(etaUpdateId, "needs_review");
     throw new NonRetryableActionError("NETSUITE_PO_ETA_UPDATE_RESTLET_URL is not configured.");
   }

@@ -1,5 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { config } from "../../../shared/config.js";
+import { runEtaUpdateExecutionHandlerWithDeps } from "../../actions/eta-update/eta-update-execution-handler.js";
 import { handleEtaUpdateApprovalAction } from "./eta-update-approval.js";
 
 function deps(overrides: Record<string, unknown> = {}) {
@@ -61,4 +63,61 @@ test("duplicate approval blocked when already executed", async () => {
   assert.equal(result.kind, "ok");
   assert.equal(executeCalls, 0);
   assert.match(result.message, /already executed/i);
+});
+
+test("slack approval-style execution path calls updatePurchaseOrderEta when env is set", async () => {
+  const prevEnv = process.env.NETSUITE_PO_ETA_UPDATE_RESTLET_URL;
+  const prevConfig = config.NETSUITE_PO_ETA_UPDATE_RESTLET_URL;
+  process.env.NETSUITE_PO_ETA_UPDATE_RESTLET_URL = "https://example.com/po-eta-update";
+  config.NETSUITE_PO_ETA_UPDATE_RESTLET_URL = undefined;
+  let updateCalls = 0;
+  let posted = "";
+
+  try {
+    const result = await handleEtaUpdateApprovalAction(
+      {
+        actionId: "eta_update_approve_request",
+        actorSlackUserId: "U-ADMIN",
+        value: JSON.stringify({ actionRequestId: "req-eta-1", etaUpdateId: "eta-1", poNumber: "PO289807", etaDate: "2026-06-03" })
+      },
+      deps({
+        claimApprovedActionRequest: async () =>
+          ({
+            id: "req-eta-1",
+            action_type: "eta_update",
+            input_json: {
+              slack_channel_id: "C1",
+              eta_update_id: "eta-1",
+              po_number: "PO289807",
+              eta_date: "2026-06-03",
+              extraction_confidence: "HIGH",
+              source_type: "email",
+              raw_notes: "from email"
+            },
+            retry_count: 0
+          }) as any,
+        executeClaimedActionRequest: async (claimed: { input_json: Record<string, unknown> }) => {
+          const runResult = await runEtaUpdateExecutionHandlerWithDeps(claimed.input_json, {
+            updatePurchaseOrderEta: async () => {
+              updateCalls += 1;
+              return { success: true, poNumber: "PO289807", linesUpdated: 1 };
+            },
+            markEtaUpdateStatus: async () => undefined
+          });
+          return { ok: true, result: runResult } as any;
+        },
+        postSlackMessage: async (payload: { text: string }) => {
+          posted = payload.text;
+        }
+      }) as any
+    );
+
+    assert.equal(result.kind, "ok");
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    assert.equal(updateCalls, 1);
+    assert.match(posted, /ETA update applied/i);
+  } finally {
+    process.env.NETSUITE_PO_ETA_UPDATE_RESTLET_URL = prevEnv;
+    config.NETSUITE_PO_ETA_UPDATE_RESTLET_URL = prevConfig;
+  }
 });
