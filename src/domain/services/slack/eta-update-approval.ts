@@ -268,8 +268,22 @@ export async function handleEtaUpdateApprovalAction(input: {
         hasPoEtaUpdateUrl: Boolean(process.env.NETSUITE_PO_ETA_UPDATE_RESTLET_URL),
         hasPoEtaUpdateUrlInConfig: Boolean(config.NETSUITE_PO_ETA_UPDATE_RESTLET_URL)
       });
+      logger.info("eta_update.execution.start", {
+        actionRequestId: approved.id,
+        po: parsed.poNumber ?? (String(existing.input_json?.po_number ?? "").trim() || null),
+        slackChannelId: input.slackChannelId ?? null,
+        slackMessageTs: input.slackMessageTs ?? null
+      });
       const run = await deps.executeClaimedActionRequest(claimed, `slack-approval-${input.actorSlackUserId}`, {
         suppressSlackCompletionNotification: true
+      });
+      logger.info("eta_update.execution.returned", {
+        actionRequestId: approved.id,
+        po: parsed.poNumber ?? (String(existing.input_json?.po_number ?? "").trim() || null),
+        slackChannelId: input.slackChannelId ?? null,
+        slackMessageTs: input.slackMessageTs ?? null,
+        executionStatus: run.ok ? "success" : "failed",
+        hasOutputJson: run.ok ? Boolean(run.result && typeof run.result === "object") : false
       });
       const inputJson = (existing.input_json ?? {}) as Record<string, unknown>;
       const channel = String(inputJson.slack_channel_id ?? "").trim();
@@ -296,20 +310,50 @@ export async function handleEtaUpdateApprovalAction(input: {
               : null;
 
         if (input.slackChannelId && input.slackMessageTs) {
-          await deps.updateSlackMessage({
-            channel: input.slackChannelId,
-            ts: input.slackMessageTs,
-            text: "✅ ETA update applied",
-            blocks: buildEtaCompletionBlocks({
-              success: true,
-              actionRequestId: approved.id,
-              poNumber,
-              etaDate,
-              confidence,
-              linesUpdated,
-              netsuiteMessage
-            })
+          logger.info("eta_update.slack_completion_update.before", {
+            actionRequestId: approved.id,
+            po: poNumber,
+            slackChannelId: input.slackChannelId,
+            slackMessageTs: input.slackMessageTs,
+            executionStatus: "success",
+            hasOutputJson: true
           });
+          try {
+            await deps.updateSlackMessage({
+              channel: input.slackChannelId,
+              ts: input.slackMessageTs,
+              text: "✅ ETA update applied",
+              blocks: buildEtaCompletionBlocks({
+                success: true,
+                actionRequestId: approved.id,
+                poNumber,
+                etaDate,
+                confidence,
+                linesUpdated,
+                netsuiteMessage
+              })
+            });
+            logger.info("eta_update.slack_completion_update.after", {
+              actionRequestId: approved.id,
+              po: poNumber,
+              slackChannelId: input.slackChannelId,
+              slackMessageTs: input.slackMessageTs,
+              executionStatus: "success",
+              hasOutputJson: true
+            });
+          } catch (slackError) {
+            const slackErr = slackError as { code?: string; message?: string };
+            logger.error("eta_update.slack_completion_update.failed", {
+              actionRequestId: approved.id,
+              po: poNumber,
+              slackChannelId: input.slackChannelId,
+              slackMessageTs: input.slackMessageTs,
+              executionStatus: "success",
+              hasOutputJson: true,
+              slackErrorCode: typeof slackErr?.code === "string" ? slackErr.code : undefined,
+              slackErrorMessage: slackErr?.message ?? String(slackError)
+            });
+          }
         }
         logger.info("eta_update.slack_completion_update", {
           actionRequestId: approved.id,
@@ -330,17 +374,47 @@ export async function handleEtaUpdateApprovalAction(input: {
       const safeError = run.errorMessage || "ETA update execution failed.";
       const poNumber = parsed.poNumber ?? (String(inputJson.po_number ?? "").trim() || "-");
       if (input.slackChannelId && input.slackMessageTs) {
-        await deps.updateSlackMessage({
-          channel: input.slackChannelId,
-          ts: input.slackMessageTs,
-          text: "❌ ETA update failed",
-          blocks: buildEtaCompletionBlocks({
-            success: false,
-            actionRequestId: approved.id,
-            poNumber,
-            safeErrorMessage: safeError
-          })
+        logger.info("eta_update.slack_completion_update.before", {
+          actionRequestId: approved.id,
+          po: poNumber,
+          slackChannelId: input.slackChannelId,
+          slackMessageTs: input.slackMessageTs,
+          executionStatus: "failed",
+          hasOutputJson: false
         });
+        try {
+          await deps.updateSlackMessage({
+            channel: input.slackChannelId,
+            ts: input.slackMessageTs,
+            text: "❌ ETA update failed",
+            blocks: buildEtaCompletionBlocks({
+              success: false,
+              actionRequestId: approved.id,
+              poNumber,
+              safeErrorMessage: safeError
+            })
+          });
+          logger.info("eta_update.slack_completion_update.after", {
+            actionRequestId: approved.id,
+            po: poNumber,
+            slackChannelId: input.slackChannelId,
+            slackMessageTs: input.slackMessageTs,
+            executionStatus: "failed",
+            hasOutputJson: false
+          });
+        } catch (slackError) {
+          const slackErr = slackError as { code?: string; message?: string };
+          logger.error("eta_update.slack_completion_update.failed", {
+            actionRequestId: approved.id,
+            po: poNumber,
+            slackChannelId: input.slackChannelId,
+            slackMessageTs: input.slackMessageTs,
+            executionStatus: "failed",
+            hasOutputJson: false,
+            slackErrorCode: typeof slackErr?.code === "string" ? slackErr.code : undefined,
+            slackErrorMessage: slackErr?.message ?? String(slackError)
+          });
+        }
       }
       logger.info("eta_update.slack_completion_update", {
         actionRequestId: approved.id,

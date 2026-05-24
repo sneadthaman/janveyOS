@@ -151,7 +151,7 @@ test("successful approve updates Slack from applying to completed with final det
   );
 
   await new Promise((resolve) => setTimeout(resolve, 0));
-  assert.equal(updates.length >= 2, true);
+  assert.equal(updates.length, 2);
   assert.equal(updates[0]?.text, "⏳ Running");
   const finalUpdate = updates[updates.length - 1];
   assert.equal(finalUpdate?.text, "✅ ETA update applied");
@@ -185,7 +185,7 @@ test("failed approve updates Slack from applying to failed and shows no NetSuite
   );
 
   await new Promise((resolve) => setTimeout(resolve, 0));
-  assert.equal(updates.length >= 2, true);
+  assert.equal(updates.length, 2);
   const finalUpdate = updates[updates.length - 1];
   assert.equal(finalUpdate?.text, "❌ ETA update failed");
   const finalText = String(finalUpdate?.blocks?.[0]?.text && typeof finalUpdate.blocks[0].text === "object" ? (finalUpdate.blocks[0].text as Record<string, unknown>).text : "");
