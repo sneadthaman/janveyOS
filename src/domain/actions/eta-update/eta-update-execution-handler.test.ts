@@ -62,6 +62,64 @@ test("successful NetSuite response marks eta update applied", async () => {
   }
 });
 
+test("approved eta_update execution calls updatePurchaseOrderEta exactly once with deployed payload shape", async () => {
+  const prev = config.NETSUITE_PO_ETA_UPDATE_RESTLET_URL;
+  config.NETSUITE_PO_ETA_UPDATE_RESTLET_URL = "https://example.com/eta";
+  let updateCalls = 0;
+  let capturedPayload: Record<string, unknown> | null = null;
+  let lookupCalls = 0;
+
+  try {
+    const result = await runEtaUpdateExecutionHandlerWithDeps(
+      {
+        eta_update_id: "eta-4",
+        po_number: "PO289807",
+        eta_date: "2026-06-03",
+        extraction_confidence: "HIGH",
+        tracking_number: "PRO123",
+        source_type: "email",
+        raw_notes: "ETA from vendor email",
+        items: [{ item: "ITEM-1", etaDate: "2026-06-03", confidence: "HIGH" }]
+      },
+      {
+        updatePurchaseOrderEta: async (payload) => {
+          updateCalls += 1;
+          capturedPayload = payload as unknown as Record<string, unknown>;
+          return { success: true, poNumber: "PO289807", linesUpdated: 1 };
+        },
+        markEtaUpdateStatus: async () => {
+          lookupCalls += 0;
+        }
+      }
+    );
+
+    assert.equal(result.success, true);
+    assert.equal(updateCalls, 1);
+    assert.deepEqual(capturedPayload, {
+      po: "PO289807",
+      etaDate: "2026-06-03",
+      etaConfidence: "HIGH",
+      trackingNumber: "PRO123",
+      etaSource: "email",
+      etaNotes: "ETA from vendor email",
+      updateOwner: "JanveyOS",
+      items: [
+        {
+          item: "ITEM-1",
+          itemInternalId: undefined,
+          etaDate: "2026-06-03",
+          trackingNumber: undefined,
+          confidence: "HIGH",
+          notes: undefined
+        }
+      ]
+    });
+    assert.equal(lookupCalls, 0);
+  } finally {
+    config.NETSUITE_PO_ETA_UPDATE_RESTLET_URL = prev;
+  }
+});
+
 test("failure response does not mark applied", async () => {
   const prev = config.NETSUITE_PO_ETA_UPDATE_RESTLET_URL;
   config.NETSUITE_PO_ETA_UPDATE_RESTLET_URL = "https://example.com/eta";

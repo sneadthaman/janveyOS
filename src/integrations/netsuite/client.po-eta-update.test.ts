@@ -7,7 +7,7 @@ test("missing PO ETA RESTlet URL fails safely", async () => {
   const prev = config.NETSUITE_PO_ETA_UPDATE_RESTLET_URL;
   config.NETSUITE_PO_ETA_UPDATE_RESTLET_URL = undefined;
   try {
-    const result = await updatePurchaseOrderEta({ poNumber: "PO289731", etaDate: "2026-05-29", updateScope: "po_all_lines" });
+    const result = await updatePurchaseOrderEta({ po: "PO289731", etaDate: "2026-05-29" });
     assert.equal(result.success, false);
     assert.equal(result.code, "CONFIG_ERROR");
   } finally {
@@ -28,7 +28,7 @@ test("PO ETA update normalizes successful response", async () => {
     }) as Response) as typeof fetch;
 
   try {
-    const result = await updatePurchaseOrderEta({ poNumber: "PO289731", etaDate: "2026-05-29", updateScope: "po_all_lines" });
+    const result = await updatePurchaseOrderEta({ po: "PO289731", etaDate: "2026-05-29" });
     assert.equal(result.success, true);
     assert.equal(result.poNumber, "PO289731");
     assert.equal(result.poInternalId, "9001");

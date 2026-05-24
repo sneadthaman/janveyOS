@@ -107,13 +107,21 @@ export interface OpenPurchaseOrderLookupResult {
 }
 
 export interface UpdatePurchaseOrderEtaInput {
-  poInternalId?: string;
-  poNumber?: string;
-  itemInternalId?: string;
+  po: string;
   etaDate: string;
-  updateScope: "po_all_lines" | "po_line";
-  trackingNumber?: string;
-  notes?: string;
+  etaConfidence?: string;
+  trackingNumber?: string | null;
+  etaSource?: string;
+  etaNotes?: string;
+  updateOwner?: string;
+  items?: Array<{
+    item?: string | null;
+    itemInternalId?: string | null;
+    etaDate?: string | null;
+    trackingNumber?: string | null;
+    confidence?: string | null;
+    notes?: string | null;
+  }>;
 }
 
 export interface UpdatePurchaseOrderEtaResult {
@@ -788,21 +796,24 @@ export async function updatePurchaseOrderEta(input: UpdatePurchaseOrderEtaInput)
   if (authHeader) headers.authorization = authHeader;
 
   const body: Record<string, unknown> = {
-    eta_date: input.etaDate,
-    update_scope: input.updateScope
+    po: input.po,
+    etaDate: input.etaDate,
+    etaConfidence: input.etaConfidence ?? "MED",
+    trackingNumber: input.trackingNumber ?? null,
+    etaSource: input.etaSource ?? "email",
+    etaNotes: input.etaNotes ?? "",
+    updateOwner: input.updateOwner ?? "JanveyOS"
   };
-  if (input.poInternalId) body.po_internal_id = input.poInternalId;
-  if (input.poNumber) body.po_number = input.poNumber;
-  if (input.itemInternalId) body.item_internal_id = input.itemInternalId;
-  if (input.trackingNumber) body.tracking_number = input.trackingNumber;
-  if (input.notes) body.notes = input.notes;
+  if (input.items && input.items.length > 0) body.items = input.items;
 
   console.log("[netsuite] updatePurchaseOrderEta start", {
     hasRestletUrl: Boolean(config.NETSUITE_PO_ETA_UPDATE_RESTLET_URL),
     hasAuthHeader: Boolean(headers.authorization),
-    poInternalId: input.poInternalId ?? null,
-    poNumber: input.poNumber ?? null,
-    updateScope: input.updateScope
+    po: input.po,
+    etaDate: input.etaDate,
+    etaConfidence: input.etaConfidence ?? "MED",
+    hasTracking: Boolean(input.trackingNumber),
+    itemCount: input.items?.length ?? 0
   });
 
   try {
