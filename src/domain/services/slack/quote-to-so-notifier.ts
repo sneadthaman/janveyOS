@@ -77,7 +77,21 @@ export async function updateSlackMessage(payload: {
   text: string;
   blocks?: Array<Record<string, unknown>>;
 }) {
+  if (!payload.channel || !payload.ts) {
+    logger.info("eta_update.slack_update_message", {
+      channel: payload.channel || null,
+      ts: payload.ts || null,
+      mode: "update_only",
+      status: "missing_target_noop"
+    });
+    return;
+  }
   if (!config.SLACK_BOT_TOKEN) return;
+  logger.info("eta_update.slack_update_message", {
+    channel: payload.channel,
+    ts: payload.ts,
+    mode: "update_only"
+  });
   const response = await fetch("https://slack.com/api/chat.update", {
     method: "POST",
     headers: {

@@ -24,7 +24,6 @@ function deps(overrides: Record<string, unknown> = {}) {
     }) as any,
     executeClaimedActionRequest: async () => ({ ok: true, result: { poNumber: "PO289731", etaDate: "2026-05-29" } }) as any,
     markActionAttemptFailed: async () => undefined,
-    postSlackMessage: async () => undefined,
     updateSlackMessage: async () => undefined,
     ...overrides
   };
@@ -67,7 +66,6 @@ test("duplicate approval blocked when already executed", async () => {
 
 test("running duplicate click does not execute twice and does not post new message", async () => {
   let executeCalls = 0;
-  let postedCalls = 0;
   let updateCalls = 0;
   const result = await handleEtaUpdateApprovalAction(
     {
@@ -84,9 +82,6 @@ test("running duplicate click does not execute twice and does not post new messa
         executeCalls += 1;
         return { ok: true } as any;
       },
-      postSlackMessage: async () => {
-        postedCalls += 1;
-      },
       updateSlackMessage: async () => {
         updateCalls += 1;
       }
@@ -96,7 +91,6 @@ test("running duplicate click does not execute twice and does not post new messa
   assert.equal(result.kind, "ok");
   assert.equal(result.message, "");
   assert.equal(executeCalls, 0);
-  assert.equal(postedCalls, 0);
   assert.equal(updateCalls, 1);
 });
 
@@ -106,7 +100,7 @@ test("slack approval-style execution path calls updatePurchaseOrderEta when env 
   process.env.NETSUITE_PO_ETA_UPDATE_RESTLET_URL = "https://example.com/po-eta-update";
   config.NETSUITE_PO_ETA_UPDATE_RESTLET_URL = undefined;
   let updateCalls = 0;
-  let posted = "";
+  let updates = 0;
 
   try {
     const result = await handleEtaUpdateApprovalAction(
@@ -141,8 +135,8 @@ test("slack approval-style execution path calls updatePurchaseOrderEta when env 
           });
           return { ok: true, result: runResult } as any;
         },
-        postSlackMessage: async (payload: { text: string }) => {
-          posted = payload.text;
+        updateSlackMessage: async () => {
+          updates += 1;
         }
       }) as any
     );
@@ -150,7 +144,7 @@ test("slack approval-style execution path calls updatePurchaseOrderEta when env 
     assert.equal(result.kind, "ok");
     await new Promise((resolve) => setTimeout(resolve, 0));
     assert.equal(updateCalls, 1);
-    assert.match(posted, /ETA update applied/i);
+    assert.equal(updates, 2);
   } finally {
     process.env.NETSUITE_PO_ETA_UPDATE_RESTLET_URL = prevEnv;
     config.NETSUITE_PO_ETA_UPDATE_RESTLET_URL = prevConfig;
@@ -159,7 +153,6 @@ test("slack approval-style execution path calls updatePurchaseOrderEta when env 
 
 test("successful approve updates Slack from applying to completed with final details and no buttons", async () => {
   const updates: Array<{ text: string; blocks?: Array<Record<string, unknown>> }> = [];
-  let postCalls = 0;
   await handleEtaUpdateApprovalAction(
     {
       actionId: "eta_update_approve_request",
@@ -183,16 +176,13 @@ test("successful approve updates Slack from applying to completed with final det
         }) as any,
       updateSlackMessage: async (payload: { text: string; blocks?: Array<Record<string, unknown>> }) => {
         updates.push(payload);
-      },
-      postSlackMessage: async () => {
-        postCalls += 1;
       }
     }) as any
   );
 
   await new Promise((resolve) => setTimeout(resolve, 0));
   assert.equal(updates.length, 2);
-  assert.equal(updates[0]?.text, "⏳ Running");
+  assert.equal(updates[0]?.text, "⏳ Applying ETA update...");
   const finalUpdate = updates[updates.length - 1];
   assert.equal(finalUpdate?.text, "✅ ETA update applied");
   const finalText = String(finalUpdate?.blocks?.[0]?.text && typeof finalUpdate.blocks[0].text === "object" ? (finalUpdate.blocks[0].text as Record<string, unknown>).text : "");
@@ -204,7 +194,6 @@ test("successful approve updates Slack from applying to completed with final det
   assert.match(finalText, /ETA updated on PO\./);
   const hasActionsBlock = (finalUpdate?.blocks ?? []).some((b) => b.type === "actions");
   assert.equal(hasActionsBlock, false);
-  assert.equal(postCalls, 0);
 });
 
 test("failed approve updates Slack from applying to failed and shows no NetSuite changes", async () => {

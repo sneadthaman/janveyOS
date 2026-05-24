@@ -8,7 +8,7 @@ import {
 } from "../../repositories/agent-manager-repository.js";
 import { claimApprovedActionRequest, markActionAttemptFailed } from "../../repositories/agent-worker-repository.js";
 import { executeClaimedActionRequest } from "../action-execution-worker.js";
-import { postSlackMessage, updateSlackMessage } from "./quote-to-so-notifier.js";
+import { updateSlackMessage } from "./quote-to-so-notifier.js";
 import { canExecuteActionRequest, isTerminalActionRequestStatus } from "../actions/action-request-status.js";
 import { isAuthorizedQuoteToSoApprover } from "./quote-to-so-approval.js";
 
@@ -226,7 +226,6 @@ export async function handleEtaUpdateApprovalAction(input: {
   claimApprovedActionRequest: typeof claimApprovedActionRequest;
   executeClaimedActionRequest: typeof executeClaimedActionRequest;
   markActionAttemptFailed: typeof markActionAttemptFailed;
-  postSlackMessage: typeof postSlackMessage;
   updateSlackMessage: typeof updateSlackMessage;
 } = {
   isAuthorizedApprover: isAuthorizedQuoteToSoApprover,
@@ -237,7 +236,6 @@ export async function handleEtaUpdateApprovalAction(input: {
   claimApprovedActionRequest,
   executeClaimedActionRequest,
   markActionAttemptFailed,
-  postSlackMessage,
   updateSlackMessage
 }) {
   if (!deps.isAuthorizedApprover(input.actorSlackUserId)) {
