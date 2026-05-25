@@ -110,3 +110,52 @@ test("service rejects pending/failed documents", async () => {
     /must be completed/
   );
 });
+
+test("service stores eta vendor profile and RJ item lines in raw extraction metadata", async () => {
+  let capturedRawExtractionJson: Record<string, unknown> | null = null;
+
+  const result = await processIngestedDocumentWithDeps("doc-rj-1", {
+    findDocumentById: async () =>
+      makeDoc({
+        id: "doc-rj-1",
+        fileName: "S6509406-0001_3529484.pdf",
+        extractedText: [
+          "RJ Schinner",
+          "Acknowledgement",
+          "Date: 05/22/26",
+          "Customer PO: PO289824",
+          "Ship Date: 05/26/26",
+          "Ship Via: OUR.TRUCK",
+          "30359 qty 300",
+          "02001 qty 20",
+          "30358 qty 100"
+        ].join("\n")
+      }),
+    findExtractionByDocumentId: async () => null,
+    findEtaCandidatesByExtractionId: async () => [],
+    classifyDocumentText: () => ({ classification: "invoice_with_shipping_signal", confidence: 0.9, reasons: ["invoice_shipping_signal"] }),
+    createDocumentExtraction: async (input) => {
+      capturedRawExtractionJson = input.rawExtractionJson;
+      return {
+        id: "ex-rj-1",
+        documentId: "doc-rj-1",
+        extractorVersion: "v1",
+        classification: "invoice_with_shipping_signal",
+        confidence: 0.9,
+        rawExtractionJson: input.rawExtractionJson,
+        createdAt: "2026-05-24T00:00:00Z"
+      };
+    },
+    createEtaUpdateCandidates: async () => [],
+    updateIngestedDocumentType: async () => makeDoc({ id: "doc-rj-1", documentType: "invoice_with_shipping_signal" })
+  });
+
+  assert.equal(result.extraction.classification, "invoice_with_shipping_signal");
+  assert.ok(capturedRawExtractionJson);
+  assert.equal(capturedRawExtractionJson?.["eta_vendor_profile"], "rj_schinner_acknowledgement");
+  const reasons = (capturedRawExtractionJson?.["reasons"] ?? []) as string[];
+  assert.ok(reasons.includes("eta_vendor_profile:rj_schinner_acknowledgement"));
+  const extractedItemLines = (capturedRawExtractionJson?.["extracted_item_lines"] ?? []) as Array<Record<string, unknown>>;
+  assert.equal(extractedItemLines.length, 3);
+  assert.deepEqual(extractedItemLines[0], { itemNumber: "30359", quantity: 300 });
+});

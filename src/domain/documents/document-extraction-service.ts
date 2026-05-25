@@ -1,5 +1,5 @@
 import { classifyDocumentText } from "./document-classifier.js";
-import { extractEtaUpdateCandidates } from "./eta-candidate-extractor.js";
+import { detectEtaVendorProfile, extractEtaUpdateCandidates, extractRjSchinnerItemLines } from "./eta-candidate-extractor.js";
 import {
   createDocumentExtraction,
   createEtaUpdateCandidates,
@@ -23,6 +23,8 @@ interface Deps {
   findEtaCandidatesByExtractionId: typeof findEtaCandidatesByExtractionId;
   classifyDocumentText: typeof classifyDocumentText;
   extractEtaUpdateCandidates: typeof extractEtaUpdateCandidates;
+  detectEtaVendorProfile: typeof detectEtaVendorProfile;
+  extractRjSchinnerItemLines: typeof extractRjSchinnerItemLines;
 }
 
 const defaultDeps: Deps = {
@@ -33,7 +35,9 @@ const defaultDeps: Deps = {
   findExtractionByDocumentId,
   findEtaCandidatesByExtractionId,
   classifyDocumentText,
-  extractEtaUpdateCandidates
+  extractEtaUpdateCandidates,
+  detectEtaVendorProfile,
+  extractRjSchinnerItemLines
 };
 
 export interface ProcessIngestedDocumentResult {
@@ -71,6 +75,8 @@ export async function processIngestedDocumentWithDeps(
     sourceSender: document.sourceSender,
     sourceFolderHint: document.sourceFolderHint
   });
+  const etaVendorProfile = resolved.detectEtaVendorProfile(text, { fileName: document.fileName, sourceSender: document.sourceSender });
+  const rjItemLines = etaVendorProfile === "rj_schinner_acknowledgement" ? resolved.extractRjSchinnerItemLines(text) : [];
 
   const extraction = await resolved.createDocumentExtraction({
     documentId,
@@ -78,15 +84,21 @@ export async function processIngestedDocumentWithDeps(
     classification: classification.classification as DocumentType,
     confidence: classification.confidence,
     rawExtractionJson: {
-      reasons: classification.reasons,
-      preview: text.slice(0, 1000)
+      reasons: [...classification.reasons, `eta_vendor_profile:${etaVendorProfile}`],
+      preview: text.slice(0, 1000),
+      eta_vendor_profile: etaVendorProfile,
+      extracted_item_lines: rjItemLines
     }
   });
 
   let candidates: EtaUpdateCandidateRecord[] = [];
 
   if (classification.classification === "eta_update" || classification.classification === "invoice_with_shipping_signal") {
-    const extractedCandidates = resolved.extractEtaUpdateCandidates(text, { classification: classification.classification });
+    const extractedCandidates = resolved.extractEtaUpdateCandidates(text, {
+      classification: classification.classification,
+      fileName: document.fileName,
+      sourceSender: document.sourceSender
+    });
     candidates = await resolved.createEtaUpdateCandidates(
       extractedCandidates.map((candidate) => ({
         documentExtractionId: extraction.id,

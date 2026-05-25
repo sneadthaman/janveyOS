@@ -16,7 +16,11 @@ export interface EtaUpdateCandidate {
 interface ExtractorOptions {
   now?: Date;
   classification?: string;
+  fileName?: string | null;
+  sourceSender?: string | null;
 }
+
+export type EtaVendorProfile = "sss_invoice" | "rj_schinner_acknowledgement" | "unknown";
 
 const PO_REGEX = [
   /\bPO\s*#?\s*(\d{4,})\b/i,
@@ -41,6 +45,7 @@ const SHIPPING_OR_INVOICE_SIGNAL_REGEX = [
   /\bship\s+via\b/i,
   /\bfreight\s+carrier\b/i
 ];
+const SSS_SHIPPED_OR_FULFILLED_REGEX = [/\bshipped\s*[:#]?\s*\d+\b/i, /\bfulfilled\s*[:#]?\s*\d+\b/i];
 
 const ENTIRE_PO_REGEX = [/entire\s+po/i, /all\s+items/i, /complete\s+order/i, /full\s+po/i, /bring\s+po\s*\d{4,}\s+on/i];
 
@@ -127,6 +132,7 @@ function normalizeCarrier(value: string | null): string | null {
   if (upper.includes("USPS")) return "USPS";
   if (upper.includes("XPO")) return "XPO";
   if (upper.includes("OLD DOMINION")) return "OLD DOMINION";
+  if (upper.includes("OUR.TRUCK") || upper.includes("OUR TRUCK")) return "RJ_SCHINNER_TRUCK";
   return upper;
 }
 
@@ -140,9 +146,48 @@ function addDays(isoDate: string, days: number): string {
   return `${y}-${m}-${d}`;
 }
 
+export function detectEtaVendorProfile(text: string, options?: { fileName?: string | null; sourceSender?: string | null }): EtaVendorProfile {
+  const raw = text.trim();
+  const lower = raw.toLowerCase();
+  const fileName = String(options?.fileName ?? "").trim().toLowerCase();
+  const sender = String(options?.sourceSender ?? "").trim().toLowerCase();
+
+  const isSss =
+    (lower.includes("triple s") && lower.includes("invoice")) ||
+    lower.includes("member # 380") ||
+    lower.includes("standardized sanitation systems");
+  if (isSss) return "sss_invoice";
+
+  const isRjSchinner =
+    lower.includes("rj schinner") ||
+    lower.includes("acknowledgement") ||
+    (fileName.includes("s650") && fileName.endsWith(".pdf")) ||
+    sender.includes("rjschinner");
+  if (isRjSchinner) return "rj_schinner_acknowledgement";
+
+  return "unknown";
+}
+
+export function extractRjSchinnerItemLines(text: string): Array<{ itemNumber: string; quantity: number | null }> {
+  const lines = text.split(/\r?\n/);
+  const out: Array<{ itemNumber: string; quantity: number | null }> = [];
+  for (const line of lines) {
+    const m = line.match(/\b(\d{4,6})\b(?:\D+qty\D*(\d+))?/i);
+    if (!m?.[1]) continue;
+    const itemNumber = m[1].trim();
+    const quantity = m[2] ? Number(m[2]) : null;
+    if (!itemNumber) continue;
+    if (!out.some((row) => row.itemNumber === itemNumber)) {
+      out.push({ itemNumber, quantity: Number.isFinite(quantity as number) ? quantity : null });
+    }
+  }
+  return out;
+}
+
 export function extractEtaUpdateCandidates(text: string, options?: ExtractorOptions): EtaUpdateCandidate[] {
   const now = options?.now ?? new Date();
   const classification = (options?.classification ?? "").trim().toLowerCase();
+  const vendorProfile = detectEtaVendorProfile(text, { fileName: options?.fileName, sourceSender: options?.sourceSender });
   const raw = text.trim();
   if (!raw) return [];
 
@@ -190,6 +235,19 @@ export function extractEtaUpdateCandidates(text: string, options?: ExtractorOpti
     /\bdocument\s+date\s*:?\s*(\d{1,2}[\/-]\d{1,2}(?:[\/-]\d{2,4})?)/i,
     /\bdate\s*:?\s*(\d{1,2}[\/-]\d{1,2}(?:[\/-]\d{2,4})?)/i
   ]);
+  const hasShippedOrFulfilledQty = SSS_SHIPPED_OR_FULFILLED_REGEX.some((rx) => rx.test(raw));
+  const itemLines = extractRjSchinnerItemLines(raw);
+  const lineLevelItem = item ? item : itemLines[0]?.itemNumber ?? null;
+  let resolvedAppliesToEntirePo = appliesToEntirePo;
+
+  if (!etaDate && vendorProfile === "rj_schinner_acknowledgement" && shipDateRaw) {
+    etaDate = toIsoDate(shipDateRaw, now);
+    etaDateSource = etaDate ? "ship_date" : null;
+    etaDateIsEstimated = false;
+    if ((itemLines.length > 1 || /\backnowledgement\b/i.test(raw)) && etaDate) {
+      resolvedAppliesToEntirePo = true;
+    }
+  }
 
   if (!etaDate && tracking && hasShippingOrInvoiceSignals) {
     if (shipDateRaw) {
@@ -210,19 +268,30 @@ export function extractEtaUpdateCandidates(text: string, options?: ExtractorOpti
     }
   }
 
+  if (!etaDate && vendorProfile === "sss_invoice" && po && hasShippedOrFulfilledQty) {
+    const baseDateCandidate = documentDateRaw ? toIsoDate(documentDateRaw, now) : invoiceDateRaw ? toIsoDate(invoiceDateRaw, now) : null;
+    if (baseDateCandidate) {
+      baseDate = baseDateCandidate;
+      baseDateSource = "document_date";
+      etaDate = addDays(baseDate, 4);
+      etaDateSource = "estimated_from_document_date_plus_4_days";
+      etaDateIsEstimated = true;
+    }
+  }
+
   const confidence = (() => {
     let score = 0.5;
     if (po) score += 0.2;
     if (etaDate) score += 0.2;
     if (tracking) score += 0.05;
-    if (item) score += 0.05;
-    if (appliesToEntirePo) score += 0.05;
+    if (lineLevelItem) score += 0.05;
+    if (resolvedAppliesToEntirePo) score += 0.05;
     if (etaDateIsEstimated) score = Math.min(score, 0.7);
     if (etaDateIsEstimated && score < 0.55) score = 0.55;
     return Math.min(score, 0.99);
   })();
 
-  if (po || etaDate || tracking || item) {
+  if (po || etaDate || tracking || lineLevelItem) {
     candidates.push({
       poNumber: po,
       etaDate,
@@ -232,8 +301,8 @@ export function extractEtaUpdateCandidates(text: string, options?: ExtractorOpti
       baseDateSource,
       trackingNumber: tracking,
       carrier,
-      itemNumber: item,
-      appliesToEntirePo,
+      itemNumber: lineLevelItem,
+      appliesToEntirePo: resolvedAppliesToEntirePo,
       confidence,
       rawContext: lines.slice(0, 6).join("\n")
     });
