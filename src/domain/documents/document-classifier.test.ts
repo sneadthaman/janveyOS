@@ -23,6 +23,17 @@ test("classifier identifies unknown", () => {
   assert.equal(result.classification, "unknown");
 });
 
+test("classifier identifies RJ Schinner acknowledgement as invoice_with_shipping_signal", () => {
+  const text = [
+    "R ¥Schinner Acknowledgement",
+    "Customer PO: PO289824",
+    "Ship Via: OUR.TRUCK",
+    "30359 qty 300"
+  ].join("\n");
+  const result = classifyDocumentText(text);
+  assert.equal(result.classification, "invoice_with_shipping_signal");
+});
+
 test("classifier prioritizes strong customer PO signals from customer_po folder", () => {
   const text = [
     "Purchase Order",

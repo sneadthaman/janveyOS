@@ -75,7 +75,10 @@ const schema = z.object({
   AI_REASONING_EFFORT_KNOWLEDGE_SUMMARY: optionalEnvString,
   AI_REASONING_EFFORT_EMAIL_DRAFT: optionalEnvString,
   AI_REASONING_EFFORT_STRUCTURED_KNOWLEDGE_EXTRACTION: optionalEnvString,
-  AI_REASONING_EFFORT_FALLBACK: optionalEnvString
+  AI_REASONING_EFFORT_FALLBACK: optionalEnvString,
+  PDF_OCR_ENABLED: z.preprocess((value) => parseBooleanEnv(value), z.boolean()).default(false),
+  PDF_OCR_MIN_TEXT_LENGTH: z.coerce.number().default(100),
+  PDF_OCR_MAX_PAGES: z.coerce.number().default(3)
 });
 
 const parsed = schema.safeParse(process.env);

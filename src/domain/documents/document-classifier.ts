@@ -27,6 +27,7 @@ const PO_SIGNALS = [/\bpo\s*#?\s*\d{4,}\b/i, /purchase\s+order/i, /customer\s+po
 const QUOTE_SIGNALS = [/\bquote\b/i, /\bestimate\b/i, /\best\d+/i];
 const INVOICE_SIGNALS = [/\binvoice\b/i, /invoice\s*#?/i];
 const SHIPPING_SIGNALS = [/tracking/i, /\bcarrier\b/i, /\bship(?:ped|ping)?\b/i, /\bPRO\s*[A-Z0-9-]{3,}\b/i];
+const ACKNOWLEDGEMENT_SIGNALS = [/\backnowledg(?:e)?ment\b/i, /\bredistribution specialists\b/i];
 const PO_STRUCTURE_SIGNALS = [/\bship\s+to\b/i, /\bbill\s+to\b/i, /\bitem\b/i, /\buom\b/i, /\bext\.?\s*price\b/i, /\bqty\b/i];
 const SUBJECT_PO_SIGNALS = [/purchase\s+order/i, /dispatched\s+purchase\s+order/i, /\bpo\s*#?\s*\d{4,}\b/i];
 const CUSTOMER_SENDER_HINTS = [/@nyct\.com$/i, /@northwell\.edu$/i, /@chsli\.org$/i, /@esboces\.org$/i];
@@ -63,6 +64,8 @@ export function classifyDocumentText(text: string, context?: DocumentClassificat
 
   const hasInvoiceSignal = INVOICE_SIGNALS.some((rx) => rx.test(normalized));
   const hasShippingSignal = SHIPPING_SIGNALS.some((rx) => rx.test(normalized));
+  const hasAcknowledgementSignal = ACKNOWLEDGEMENT_SIGNALS.some((rx) => rx.test(normalized));
+  const hasRjSchinnerSignal = /\brj\s*schinner\b/i.test(normalized) || /r\s*¥\s*schinner/i.test(normalized);
   const subjectHasPoSignal = SUBJECT_PO_SIGNALS.some((rx) => rx.test(sourceSubject));
   const senderHasCustomerHint = CUSTOMER_SENDER_HINTS.some((rx) => rx.test(sourceSender));
   const fileNameHasPoHint = /(?:^|[^a-z0-9])po[_ -]/i.test(fileName) || /purchase\s*order/i.test(fileName);
@@ -90,6 +93,10 @@ export function classifyDocumentText(text: string, context?: DocumentClassificat
 
   if (hasInvoiceSignal && hasShippingSignal) {
     return { classification: "invoice_with_shipping_signal", confidence: 0.78, reasons: [...reasons, "invoice_shipping_signal"] };
+  }
+
+  if ((hasAcknowledgementSignal || hasRjSchinnerSignal) && (hasPoSignal || hasShippingSignal || /\bship\s+via\b/i.test(normalized))) {
+    return { classification: "invoice_with_shipping_signal", confidence: 0.8, reasons: [...reasons, "acknowledgement_shipping_signal"] };
   }
 
   if (hasEtaSignal && hasPoSignal) {

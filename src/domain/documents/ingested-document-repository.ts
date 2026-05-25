@@ -35,6 +35,8 @@ const defaultDeps: IngestedDocumentRepositoryDeps = {
         storage_path: input.storagePath ?? null,
         sha256_hash: input.sha256Hash ?? null,
         extracted_text: input.extractedText ?? null,
+        extraction_method: input.extractionMethod ?? null,
+        ocr_used: input.ocrUsed ?? false,
         extraction_status: input.extractionStatus ?? "pending",
         extraction_error: input.extractionError ?? null,
         document_type: input.documentType ?? "unknown",
@@ -116,6 +118,8 @@ function normalizeRow(row: IngestedDocumentRow): IngestedDocument {
     storagePath: row.storage_path ? String(row.storage_path) : null,
     sha256Hash: row.sha256_hash ? String(row.sha256_hash) : null,
     extractedText: row.extracted_text ? String(row.extracted_text) : null,
+    extractionMethod: row.extraction_method ? String(row.extraction_method) : null,
+    ocrUsed: Boolean(row.ocr_used),
     extractionStatus: String(row.extraction_status ?? "pending") as IngestedDocument["extractionStatus"],
     extractionError: row.extraction_error ? String(row.extraction_error) : null,
     documentType: row.document_type ? (String(row.document_type) as IngestedDocument["documentType"]) : null,
@@ -137,11 +141,14 @@ export async function createPendingWithDeps(
 export async function markExtractionCompletedWithDeps(
   id: string,
   extractedText: string,
+  metadata: { extractionMethod?: string | null; ocrUsed?: boolean } | undefined,
   deps: IngestedDocumentRepositoryDeps
 ): Promise<IngestedDocument> {
   const row = await deps.updateRowById(id, {
     extraction_status: "completed",
     extracted_text: extractedText,
+    extraction_method: metadata?.extractionMethod ?? null,
+    ocr_used: metadata?.ocrUsed ?? false,
     extraction_error: null
   });
   return normalizeRow(row);
@@ -173,8 +180,12 @@ export async function createPending(input: CreateIngestedDocumentInput): Promise
   return createPendingWithDeps(input, defaultDeps);
 }
 
-export async function markExtractionCompleted(id: string, extractedText: string): Promise<IngestedDocument> {
-  return markExtractionCompletedWithDeps(id, extractedText, defaultDeps);
+export async function markExtractionCompleted(
+  id: string,
+  extractedText: string,
+  metadata?: { extractionMethod?: string | null; ocrUsed?: boolean }
+): Promise<IngestedDocument> {
+  return markExtractionCompletedWithDeps(id, extractedText, metadata, defaultDeps);
 }
 
 export async function markExtractionFailed(id: string, error: string): Promise<IngestedDocument> {

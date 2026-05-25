@@ -30,7 +30,7 @@ const PO_REGEX = [
 
 const ITEM_REGEX = [/\bDIV\s+(\d{4,})\b/i, /\bitem\s*:?\s*([A-Z0-9-]{4,})\b/i, /\bsku\s*:?\s*([A-Z0-9-]{4,})\b/i];
 const TRACKING_REGEX = [/\btracking\s*(?:#|number|num|no\.?)*\s*:?\s*([A-Z0-9-]{6,})\b/i, /\bPRO\s*([A-Z0-9-]{3,})\b/i];
-const CARRIER_REGEX = [/\bUPS\b/i, /\bFedEx\b/i, /\bDHL\b/i, /\bUSPS\b/i, /\bXPO\b/i, /\bOld\s+Dominion\b/i];
+const CARRIER_REGEX = [/\bUPS\b/i, /\bFedEx\b/i, /\bDHL\b/i, /\bUSPS\b/i, /\bXPO\b/i, /\bOld\s+Dominion\b/i, /\bOUR\.?\s*TRUCK\b/i];
 const CARRIER_LABELED_REGEX = [
   /\bCarrier\s+Name\s*:?\s*([A-Z][A-Z0-9 .,&-]{2,})/i,
   /\bCarrier\s*:?\s*([A-Z][A-Z0-9 .,&-]{2,})/i,
@@ -160,6 +160,7 @@ export function detectEtaVendorProfile(text: string, options?: { fileName?: stri
 
   const isRjSchinner =
     lower.includes("rj schinner") ||
+    /r\s*¥\s*schinner/i.test(raw) ||
     lower.includes("acknowledgement") ||
     (fileName.includes("s650") && fileName.endsWith(".pdf")) ||
     sender.includes("rjschinner");
@@ -172,6 +173,7 @@ export function extractRjSchinnerItemLines(text: string): Array<{ itemNumber: st
   const lines = text.split(/\r?\n/);
   const out: Array<{ itemNumber: string; quantity: number | null }> = [];
   for (const line of lines) {
+    if (!/(qty|\|\s*\d{2,6}\b)/i.test(line)) continue;
     const m = line.match(/\b(\d{4,6})\b(?:\D+qty\D*(\d+))?/i);
     if (!m?.[1]) continue;
     const itemNumber = m[1].trim();
@@ -189,6 +191,10 @@ export function extractEtaUpdateCandidates(text: string, options?: ExtractorOpti
   const classification = (options?.classification ?? "").trim().toLowerCase();
   const vendorProfile = detectEtaVendorProfile(text, { fileName: options?.fileName, sourceSender: options?.sourceSender });
   const raw = text.trim();
+  const normalizedRaw = raw
+    .replace(/\bP0O(?=\d)/gi, "PO")
+    .replace(/\bPOO(?=\d)/gi, "PO")
+    .replace(/\bOUR\.\s*TRUCK\b/gi, "OUR.TRUCK");
   if (!raw) return [];
 
   const lines = raw
@@ -198,12 +204,12 @@ export function extractEtaUpdateCandidates(text: string, options?: ExtractorOpti
 
   const candidates: EtaUpdateCandidate[] = [];
 
-  const po = normalizePoNumber(findFirst(raw, PO_REGEX));
-  const explicitEtaDateRaw = findFirst(raw, [
+  const po = normalizePoNumber(findFirst(normalizedRaw, PO_REGEX));
+  const explicitEtaDateRaw = findFirst(normalizedRaw, [
     /\b(?:eta|estimated delivery|expected delivery|delivery date)\s*:?\s*(\d{1,2}[\/-]\d{1,2}(?:[\/-]\d{2,4})?)/i,
     /\b(?:eta|estimated delivery|expected delivery|delivery date)\s*:?\s*((?:Jan|January|Feb|February|Mar|March|Apr|April|May|Jun|June|Jul|July|Aug|August|Sep|Sept|September|Oct|October|Nov|November|Dec|December)\s+\d{1,2}(?:,\s*\d{4})?)/i
   ]);
-  const fallbackAnyDateRaw = findFirst(raw, [
+  const fallbackAnyDateRaw = findFirst(normalizedRaw, [
     /\b\d{1,2}[\/-]\d{1,2}(?:[\/-]\d{2,4})?\b/,
     /\b(?:Jan|January|Feb|February|Mar|March|Apr|April|May|Jun|June|Jul|July|Aug|August|Sep|Sept|September|Oct|October|Nov|November|Dec|December)\s+\d{1,2}(?:,\s*\d{4})?/i
   ]);
@@ -212,39 +218,44 @@ export function extractEtaUpdateCandidates(text: string, options?: ExtractorOpti
   let etaDateIsEstimated = false;
   let baseDate: string | null = null;
   let baseDateSource: string | null = null;
-  const tracking = findFirst(raw, TRACKING_REGEX)?.toUpperCase() ?? null;
-  const hasShippingOrInvoiceSignals = SHIPPING_OR_INVOICE_SIGNAL_REGEX.some((rx) => rx.test(raw));
+  const tracking = findFirst(normalizedRaw, TRACKING_REGEX)?.toUpperCase() ?? null;
+  const hasShippingOrInvoiceSignals = SHIPPING_OR_INVOICE_SIGNAL_REGEX.some((rx) => rx.test(normalizedRaw));
   if (!etaDate && fallbackAnyDateRaw && !(tracking && hasShippingOrInvoiceSignals)) {
     etaDate = toIsoDate(fallbackAnyDateRaw, now);
     etaDateSource = etaDate ? "explicit_date_in_document" : null;
   }
-  const carrierRaw = findFirst(raw, CARRIER_LABELED_REGEX) ?? findFirst(raw, CARRIER_REGEX);
+  const carrierRaw = findFirst(normalizedRaw, CARRIER_LABELED_REGEX) ?? findFirst(normalizedRaw, CARRIER_REGEX);
   const carrier = normalizeCarrier(carrierRaw);
-  const item = normalizeItemNumber(findFirst(raw, ITEM_REGEX));
-  const appliesToEntirePo = ENTIRE_PO_REGEX.some((rx) => rx.test(raw));
+  const item = normalizeItemNumber(findFirst(normalizedRaw, ITEM_REGEX));
+  const appliesToEntirePo = ENTIRE_PO_REGEX.some((rx) => rx.test(normalizedRaw));
 
-  const invoiceDateRaw = findFirst(raw, [
+  const invoiceDateRaw = findFirst(normalizedRaw, [
     /\binvoice\s+date\s*:?\s*(\d{1,2}[\/-]\d{1,2}(?:[\/-]\d{2,4})?)/i,
     /\binvoice\s+date\s*:?\s*((?:Jan|January|Feb|February|Mar|March|Apr|April|May|Jun|June|Jul|July|Aug|August|Sep|Sept|September|Oct|October|Nov|November|Dec|December)\s+\d{1,2}(?:,\s*\d{4})?)/i
   ]);
-  const shipDateRaw = findFirst(raw, [
+  const shipDateRaw = findFirst(normalizedRaw, [
     /\bship\s+date\s*:?\s*(\d{1,2}[\/-]\d{1,2}(?:[\/-]\d{2,4})?)/i,
     /\bship(?:ped)?\s+date\s*:?\s*((?:Jan|January|Feb|February|Mar|March|Apr|April|May|Jun|June|Jul|July|Aug|August|Sep|Sept|September|Oct|October|Nov|November|Dec|December)\s+\d{1,2}(?:,\s*\d{4})?)/i
   ]);
-  const documentDateRaw = findFirst(raw, [
+  const documentDateRaw = findFirst(normalizedRaw, [
     /\bdocument\s+date\s*:?\s*(\d{1,2}[\/-]\d{1,2}(?:[\/-]\d{2,4})?)/i,
     /\bdate\s*:?\s*(\d{1,2}[\/-]\d{1,2}(?:[\/-]\d{2,4})?)/i
   ]);
-  const hasShippedOrFulfilledQty = SSS_SHIPPED_OR_FULFILLED_REGEX.some((rx) => rx.test(raw));
-  const itemLines = extractRjSchinnerItemLines(raw);
+  const hasShippedOrFulfilledQty = SSS_SHIPPED_OR_FULFILLED_REGEX.some((rx) => rx.test(normalizedRaw));
+  const itemLines = extractRjSchinnerItemLines(normalizedRaw);
   const lineLevelItem = item ? item : itemLines[0]?.itemNumber ?? null;
   let resolvedAppliesToEntirePo = appliesToEntirePo;
 
-  if (!etaDate && vendorProfile === "rj_schinner_acknowledgement" && shipDateRaw) {
-    etaDate = toIsoDate(shipDateRaw, now);
+  if (!etaDate && vendorProfile === "rj_schinner_acknowledgement") {
+    const dateAfterTermsRaw = findFirst(normalizedRaw, [
+      /\b(?:NET\s+\d+\s+DAY)\s+(\d{1,2}[\/-]\d{1,2}(?:[\/-]\d{2,4})?)/i,
+      /\b(\d{1,2}[\/-]\d{1,2}(?:[\/-]\d{2,4})?)\b(?=[^\n]*\bOUR\.?\s*TRUCK\b)/i
+    ]);
+    const rjShipDateRaw = shipDateRaw ?? dateAfterTermsRaw;
+    etaDate = rjShipDateRaw ? toIsoDate(rjShipDateRaw, now) : null;
     etaDateSource = etaDate ? "ship_date" : null;
     etaDateIsEstimated = false;
-    if ((itemLines.length > 1 || /\backnowledgement\b/i.test(raw)) && etaDate) {
+    if ((itemLines.length > 1 || /\backnowledgement\b/i.test(normalizedRaw)) && etaDate) {
       resolvedAppliesToEntirePo = true;
     }
   }
@@ -301,7 +312,7 @@ export function extractEtaUpdateCandidates(text: string, options?: ExtractorOpti
       baseDateSource,
       trackingNumber: tracking,
       carrier,
-      itemNumber: lineLevelItem,
+      itemNumber: resolvedAppliesToEntirePo && vendorProfile === "rj_schinner_acknowledgement" ? null : lineLevelItem,
       appliesToEntirePo: resolvedAppliesToEntirePo,
       confidence,
       rawContext: lines.slice(0, 6).join("\n")

@@ -1,7 +1,7 @@
 import crypto from "node:crypto";
 import { createPending, findByHash, markExtractionCompleted, markExtractionFailed } from "./ingested-document-repository.js";
 import type { IngestedDocument, IngestedDocumentSource } from "./ingested-document-types.js";
-import { extractPdfText } from "./pdf-text-extractor.js";
+import { extractPdfTextWithOcrFallback, type PdfTextWithOcrResult } from "./pdf-ocr-extractor.js";
 
 export interface IngestPdfDocumentInput {
   source: IngestedDocumentSource;
@@ -45,9 +45,13 @@ interface DocumentIngestionDeps {
     sha256Hash?: string | null;
     documentType?: "unknown";
   }) => Promise<IngestedDocument>;
-  markExtractionCompleted: (id: string, extractedText: string) => Promise<IngestedDocument>;
+  markExtractionCompleted: (
+    id: string,
+    extractedText: string,
+    metadata?: { extractionMethod?: string | null; ocrUsed?: boolean }
+  ) => Promise<IngestedDocument>;
   markExtractionFailed: (id: string, error: string) => Promise<IngestedDocument>;
-  extractPdfText: (buffer: Buffer) => Promise<string>;
+  extractPdfTextWithOcrFallback: (buffer: Buffer) => Promise<PdfTextWithOcrResult>;
   logger: Pick<Console, "info" | "error">;
 }
 
@@ -56,7 +60,7 @@ const defaultDeps: DocumentIngestionDeps = {
   createPending,
   markExtractionCompleted,
   markExtractionFailed,
-  extractPdfText,
+  extractPdfTextWithOcrFallback,
   logger: console
 };
 
@@ -103,14 +107,22 @@ export async function ingestPdfDocumentWithDeps(
   });
 
   try {
-    const extractedText = await resolved.extractPdfText(input.buffer);
-    const completed = await resolved.markExtractionCompleted(pending.id, extractedText);
+    const extracted = await resolved.extractPdfTextWithOcrFallback(input.buffer);
+    const completed = await resolved.markExtractionCompleted(pending.id, extracted.text, {
+      extractionMethod: extracted.extractionMethod,
+      ocrUsed: extracted.ocrUsed
+    });
 
     resolved.logger.info("document_ingestion.completed", {
       source: input.source,
       fileName: input.fileName,
       sha256Hash,
-      extractionStatus: completed.extractionStatus
+      extractionStatus: completed.extractionStatus,
+      extractionMethod: extracted.extractionMethod,
+      ocrUsed: extracted.ocrUsed,
+      pagesRendered: extracted.pagesRendered ?? 0,
+      pagesOcrProcessed: extracted.pagesOcrProcessed ?? 0,
+      textLength: extracted.text.length
     });
 
     return completed;
@@ -123,7 +135,9 @@ export async function ingestPdfDocumentWithDeps(
       fileName: input.fileName,
       sha256Hash,
       extractionStatus: failed.extractionStatus,
-      extractionError: errorMessage
+      extractionMethod: null,
+      ocrUsed: false,
+      textLength: 0
     });
 
     return failed;

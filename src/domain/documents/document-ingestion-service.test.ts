@@ -25,6 +25,8 @@ function makeDocument(overrides?: Partial<IngestedDocument>): IngestedDocument {
     storagePath: null,
     sha256Hash: "hash",
     extractedText: null,
+    extractionMethod: null,
+    ocrUsed: false,
     extractionStatus: "pending",
     extractionError: null,
     documentType: "unknown",
@@ -53,10 +55,18 @@ test("ingestion service computes hash and creates row", async () => {
         capturedHash = input.sha256Hash ?? null;
         return makeDocument({ id: "doc-new", sha256Hash: input.sha256Hash ?? null, fileName: input.fileName });
       },
-      markExtractionCompleted: async (id, text) =>
-        makeDocument({ id, extractionStatus: "completed", extractedText: text, sha256Hash: expectedHash, fileName: "upload.pdf" }),
+      markExtractionCompleted: async (id, text, metadata) =>
+        makeDocument({
+          id,
+          extractionStatus: "completed",
+          extractedText: text,
+          extractionMethod: metadata?.extractionMethod ?? null,
+          ocrUsed: metadata?.ocrUsed ?? false,
+          sha256Hash: expectedHash,
+          fileName: "upload.pdf"
+        }),
       markExtractionFailed: async (id, error) => makeDocument({ id, extractionStatus: "failed", extractionError: error }),
-      extractPdfText: async () => "hello world",
+      extractPdfTextWithOcrFallback: async () => ({ text: "hello world", extractionMethod: "pdf_text", ocrUsed: false }),
       logger: { info: () => undefined, error: () => undefined }
     }
   );
@@ -64,6 +74,8 @@ test("ingestion service computes hash and creates row", async () => {
   assert.equal(capturedHash, expectedHash);
   assert.equal(result.extractionStatus, "completed");
   assert.equal(result.extractedText, "hello world");
+  assert.equal(result.extractionMethod, "pdf_text");
+  assert.equal(result.ocrUsed, false);
 });
 
 test("duplicate hash returns existing document", async () => {
@@ -84,7 +96,7 @@ test("duplicate hash returns existing document", async () => {
       },
       markExtractionCompleted: async () => makeDocument(),
       markExtractionFailed: async () => makeDocument(),
-      extractPdfText: async () => "ignored",
+      extractPdfTextWithOcrFallback: async () => ({ text: "ignored", extractionMethod: "pdf_text", ocrUsed: false }),
       logger: { info: () => undefined, error: () => undefined }
     }
   );
@@ -105,7 +117,7 @@ test("extraction failure marks row failed", async () => {
       createPending: async () => makeDocument({ id: "doc-fail", extractionStatus: "pending" }),
       markExtractionCompleted: async () => makeDocument({ extractionStatus: "completed" }),
       markExtractionFailed: async (id, error) => makeDocument({ id, extractionStatus: "failed", extractionError: error }),
-      extractPdfText: async () => {
+      extractPdfTextWithOcrFallback: async () => {
         throw new Error("parser blew up");
       },
       logger: { info: () => undefined, error: () => undefined }
@@ -115,4 +127,33 @@ test("extraction failure marks row failed", async () => {
   assert.equal(result.id, "doc-fail");
   assert.equal(result.extractionStatus, "failed");
   assert.match(String(result.extractionError), /parser blew up/);
+});
+
+test("ingestion stores extraction_method and ocr_used from OCR fallback", async () => {
+  const result = await ingestPdfDocumentWithDeps(
+    {
+      source: "manual_upload",
+      fileName: "scan.pdf",
+      buffer: Buffer.from("scan")
+    },
+    {
+      findByHash: async () => null,
+      createPending: async () => makeDocument({ id: "doc-ocr" }),
+      markExtractionCompleted: async (id, text, metadata) =>
+        makeDocument({
+          id,
+          extractionStatus: "completed",
+          extractedText: text,
+          extractionMethod: metadata?.extractionMethod ?? null,
+          ocrUsed: metadata?.ocrUsed ?? false
+        }),
+      markExtractionFailed: async (id, error) => makeDocument({ id, extractionStatus: "failed", extractionError: error }),
+      extractPdfTextWithOcrFallback: async () => ({ text: "RJ Schinner PO289824 05/26/26 OUR.TRUCK", extractionMethod: "ocr", ocrUsed: true }),
+      logger: { info: () => undefined, error: () => undefined }
+    }
+  );
+
+  assert.equal(result.extractionStatus, "completed");
+  assert.equal(result.extractionMethod, "ocr");
+  assert.equal(result.ocrUsed, true);
 });

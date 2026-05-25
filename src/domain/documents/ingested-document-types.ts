@@ -31,6 +31,8 @@ export interface CreateIngestedDocumentInput {
   storagePath?: string | null;
   sha256Hash?: string | null;
   extractedText?: string | null;
+  extractionMethod?: string | null;
+  ocrUsed?: boolean;
   extractionStatus?: ExtractionStatus;
   extractionError?: string | null;
   documentType?: DocumentType | null;
@@ -58,6 +60,8 @@ export interface IngestedDocument {
   storagePath: string | null;
   sha256Hash: string | null;
   extractedText: string | null;
+  extractionMethod?: string | null;
+  ocrUsed?: boolean;
   extractionStatus: ExtractionStatus;
   extractionError: string | null;
   documentType: DocumentType | null;

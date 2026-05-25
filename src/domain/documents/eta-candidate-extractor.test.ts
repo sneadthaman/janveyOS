@@ -126,6 +126,29 @@ test("RJ Schinner acknowledgement extracts ship date as ETA and entire-PO candid
   assert.equal(candidates[0]?.appliesToEntirePo, true);
 });
 
+test("RJ Schinner OCR-like acknowledgement text with P0O typo still extracts ETA candidate", () => {
+  const text = [
+    "R ¥Schinner Acknowledgement",
+    "38294 P0O289824 Sam Janvey",
+    "Michelle Duplicki OUR. TRUCK 1% 10 DAYS NET 30 DAY 05/26/26",
+    "300 | 300 | 30359",
+    "20 20 | 02001",
+    "100 100 | 30358"
+  ].join("\n");
+
+  const candidates = extractEtaUpdateCandidates(text, {
+    classification: "invoice_with_shipping_signal",
+    fileName: "S6509406-0001_3529484.pdf",
+    now: new Date("2026-05-24T00:00:00Z")
+  });
+
+  assert.equal(candidates.length, 1);
+  assert.equal(candidates[0]?.poNumber, "PO289824");
+  assert.equal(candidates[0]?.etaDate, "2026-05-26");
+  assert.equal(candidates[0]?.carrier, "RJ_SCHINNER_TRUCK");
+  assert.equal(candidates[0]?.appliesToEntirePo, true);
+});
+
 test("RJ Schinner item lines are parsed into extraction metadata helper", () => {
   const text = ["30359 qty 300", "02001 qty 20", "30358 qty 100"].join("\n");
   const lines = extractRjSchinnerItemLines(text);

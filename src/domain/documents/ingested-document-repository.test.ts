@@ -22,6 +22,8 @@ function makeRow(overrides?: Record<string, unknown>) {
     storage_path: "/tmp/eta.pdf",
     sha256_hash: "abc",
     extracted_text: null,
+    extraction_method: null,
+    ocr_used: false,
     extraction_status: "pending",
     extraction_error: null,
     document_type: "unknown",
@@ -51,12 +53,14 @@ test("repository createPendingWithDeps creates pending row", async () => {
 });
 
 test("repository markExtractionCompletedWithDeps marks completed and stores text", async () => {
-  const doc = await markExtractionCompletedWithDeps("doc-1", "Extracted text", {
+  const doc = await markExtractionCompletedWithDeps("doc-1", "Extracted text", { extractionMethod: "ocr", ocrUsed: true }, {
     createRow: async () => makeRow(),
     updateRowById: async (_id, patch) =>
       makeRow({
         extraction_status: patch.extraction_status,
         extracted_text: patch.extracted_text,
+        extraction_method: patch.extraction_method,
+        ocr_used: patch.ocr_used,
         extraction_error: patch.extraction_error
       }),
     findRowByHash: async () => null,
@@ -65,6 +69,8 @@ test("repository markExtractionCompletedWithDeps marks completed and stores text
 
   assert.equal(doc.extractionStatus, "completed");
   assert.equal(doc.extractedText, "Extracted text");
+  assert.equal(doc.extractionMethod, "ocr");
+  assert.equal(doc.ocrUsed, true);
   assert.equal(doc.extractionError, null);
 });
 

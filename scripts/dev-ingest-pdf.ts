@@ -34,6 +34,8 @@ async function main() {
   console.log("[dev-ingest-pdf] result", {
     documentId: result.id,
     extractionStatus: result.extractionStatus,
+    extractionMethod: result.extractionMethod ?? null,
+    ocrUsed: result.ocrUsed ?? false,
     documentType: result.documentType,
     extractedTextLength: extractedText.length
   });
