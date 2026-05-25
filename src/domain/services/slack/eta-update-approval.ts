@@ -120,6 +120,7 @@ export function buildEtaUpdateApprovalBlocks(input: {
   etaDate: string;
   trackingNumber?: string | null;
   requestedBySlackUserId?: string | null;
+  etaUpdateOwner?: string | null;
   sender?: string | null;
   subject?: string | null;
   confidence?: string | null;
@@ -155,6 +156,7 @@ export function buildEtaUpdateApprovalBlocks(input: {
           `• Subject: ${input.subject || "-"}\n` +
           `• Confidence: ${input.confidence || "-"}\n` +
           `• ETA source: ${input.etaSource || "vendor_provided_or_unknown"}\n` +
+          `• ETA Update Owner: ${input.etaUpdateOwner || "-"}\n` +
           `• Source folder: ${input.sourceFolder || "AI ETA"}\n` +
           `• Proposed affected lines: ${input.proposedAffectedLines || "-"}\n` +
           `• Notes: ${input.notes || "-"}\n` +
@@ -200,6 +202,7 @@ export async function notifyEtaUpdateApprovalRequested(input: {
   etaDate: string;
   trackingNumber?: string | null;
   requestedBySlackUserId?: string | null;
+  etaUpdateOwner?: string | null;
   sender?: string | null;
   subject?: string | null;
   confidence?: string | null;

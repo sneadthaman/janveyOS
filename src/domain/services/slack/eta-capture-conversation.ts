@@ -2,7 +2,7 @@ import { createAgentActionRequest, findLatestEtaUpdateActionRequestByEtaId } fro
 import { attachActionRequestToEtaUpdate, createEtaUpdate } from "../../actions/eta-update/eta-update-repository.js";
 import { parseSlackEtaUpdate } from "../../actions/eta-update/eta-slack-parser.js";
 import { notifyEtaUpdateApprovalRequested } from "./eta-update-approval.js";
-import { postSlackMessage } from "./quote-to-so-notifier.js";
+import { postSlackMessage, resolveSlackUserDisplayName } from "./quote-to-so-notifier.js";
 import { logger } from "../../../shared/logger.js";
 
 export function formatEtaCaptureConfirmation(input: {
@@ -29,6 +29,7 @@ type EtaCaptureDependencies = {
   createAgentActionRequest: typeof createAgentActionRequest;
   findLatestEtaUpdateActionRequestByEtaId: typeof findLatestEtaUpdateActionRequestByEtaId;
   notifyEtaUpdateApprovalRequested: typeof notifyEtaUpdateApprovalRequested;
+  resolveSlackUserDisplayName: (slackUserId: string) => Promise<string>;
   now: () => Date;
 };
 
@@ -38,6 +39,7 @@ const defaultDependencies: EtaCaptureDependencies = {
   createAgentActionRequest,
   findLatestEtaUpdateActionRequestByEtaId,
   notifyEtaUpdateApprovalRequested,
+  resolveSlackUserDisplayName,
   now: () => new Date()
 };
 
@@ -47,12 +49,15 @@ type PendingManualEtaConversation = {
   slackUserId: string;
   slackChannelId: string;
   threadTs?: string;
-  awaiting: AwaitingField;
+  currentStep: AwaitingField;
+  lastUpdatedAt: string;
   etaDate?: string;
   trackingNumber?: string | null;
 };
 
 const pendingManualEtaConversations = new Map<string, PendingManualEtaConversation>();
+const ETA_CAPTURE_CONVERSATION_TIMEOUT_MS = 5 * 60 * 1000;
+const CANCEL_INTENTS = new Set(["exit", "cancel", "stop", "nevermind", "never mind", "quit"]);
 
 function conversationKey(input: { slackUserId?: string; slackChannelId?: string; threadTs?: string; slackMessageTs?: string }) {
   const user = input.slackUserId ?? "";
@@ -143,70 +148,89 @@ export async function handleEtaSlackCapture(input: {
   if (key) {
     const pending = pendingManualEtaConversations.get(key);
     if (pending) {
-      if (lower === "cancel") {
+      const now = dependencies.now();
+      const lastUpdatedAtMs = Date.parse(pending.lastUpdatedAt);
+      if (Number.isFinite(lastUpdatedAtMs) && now.getTime() - lastUpdatedAtMs > ETA_CAPTURE_CONVERSATION_TIMEOUT_MS) {
+        pendingManualEtaConversations.delete(key);
+        await input.reply(
+          `That ETA update request for ${pending.poNumber} expired after 5 minutes. Please start again with \`update eta ${pending.poNumber}\`.`
+        );
+      } else if (CANCEL_INTENTS.has(lower)) {
         pendingManualEtaConversations.delete(key);
         logger.info("eta_manual_slack.cancelled", { poNumber: pending.poNumber, slackUserId: input.slackUserId ?? null });
-        await input.reply(`Canceled manual ETA update for ${pending.poNumber}.`);
+        await input.reply(
+          `Canceled ETA update for ${pending.poNumber}. You can start again anytime with \`update eta ${pending.poNumber}\`.`
+        );
         return true;
-      }
-
-      try {
-        if (pending.awaiting === "eta_date") {
-          const etaDate = parseManualEtaDate(trimmedText, dependencies.now());
-          if (!etaDate) {
-            await input.reply("Please provide a valid ETA date (for example: 5/29, 05/29/2026, May 29, or 2026-05-29).");
+      } else {
+        try {
+          if (pending.currentStep === "eta_date") {
+            const etaDate = parseManualEtaDate(trimmedText, now);
+            if (!etaDate) {
+              await input.reply("Please provide a valid ETA date (for example: 5/29, 05/29/2026, May 29, or 2026-05-29). Type `exit` anytime to cancel.");
+              return true;
+            }
+            pending.etaDate = etaDate;
+            pending.currentStep = "tracking_number";
+            pending.lastUpdatedAt = now.toISOString();
+            logger.info("eta_manual_slack.date_captured", { poNumber: pending.poNumber, etaDate });
+            await input.reply("Optional: send tracking number, or type `skip`. Type `exit` anytime to cancel.");
             return true;
           }
-          pending.etaDate = etaDate;
-          pending.awaiting = "tracking_number";
-          logger.info("eta_manual_slack.date_captured", { poNumber: pending.poNumber, etaDate });
-          await input.reply("Got it. Tracking number? (optional; reply `skip` for none)");
-          return true;
-        }
 
-        if (pending.awaiting === "tracking_number") {
-          pending.trackingNumber = parseOptionalField(trimmedText);
-          pending.awaiting = "notes";
-          logger.info("eta_manual_slack.tracking_captured", {
+          if (pending.currentStep === "tracking_number") {
+            pending.trackingNumber = parseOptionalField(trimmedText);
+            pending.currentStep = "notes";
+            pending.lastUpdatedAt = now.toISOString();
+            logger.info("eta_manual_slack.tracking_captured", {
+              poNumber: pending.poNumber,
+              hasTracking: Boolean(pending.trackingNumber)
+            });
+            await input.reply("Optional: add notes, or type `skip`. Type `exit` anytime to cancel.");
+            return true;
+          }
+
+          const notes = parseOptionalField(trimmedText);
+          pending.lastUpdatedAt = now.toISOString();
+          logger.info("eta_manual_slack.notes_captured", { poNumber: pending.poNumber, hasNotes: Boolean(notes) });
+          pendingManualEtaConversations.delete(key);
+
+          const sourceReferenceParts = [input.slackChannelId, input.slackMessageTs].filter(Boolean);
+          const sourceReference = sourceReferenceParts.length ? sourceReferenceParts.join(":") : null;
+          const ownerId = input.slackUserId ?? "unknown_slack_user";
+          let ownerDisplayName = ownerId;
+          if (input.slackUserId) {
+            try {
+              ownerDisplayName = await dependencies.resolveSlackUserDisplayName(input.slackUserId);
+            } catch {
+              ownerDisplayName = ownerId;
+            }
+          }
+          const rawNotes = notes
+            ? `Manual Slack update. Owner: ${ownerDisplayName} (${ownerId}). Notes: ${notes}`
+            : `Manual Slack update. Owner: ${ownerDisplayName} (${ownerId}).`;
+
+          const saved = await dependencies.createEtaUpdate({
+            vendorName: "Manual Slack update",
             poNumber: pending.poNumber,
-            hasTracking: Boolean(pending.trackingNumber)
+            netsuitePoInternalId: null,
+            itemNumber: null,
+            netsuiteItemInternalId: null,
+            etaDate: pending.etaDate ?? null,
+            trackingNumber: pending.trackingNumber ?? null,
+            updateScope: "po_all_lines",
+            sourceType: "slack",
+            sourceReference,
+            rawNotes,
+            confidence: 0.95,
+            status: "parsed"
           });
-          await input.reply("Any notes? (optional; reply `skip` for none)");
-          return true;
-        }
-
-        const notes = parseOptionalField(trimmedText);
-        logger.info("eta_manual_slack.notes_captured", { poNumber: pending.poNumber, hasNotes: Boolean(notes) });
-        pendingManualEtaConversations.delete(key);
-
-        const sourceReferenceParts = [input.slackChannelId, input.slackMessageTs].filter(Boolean);
-        const sourceReference = sourceReferenceParts.length ? sourceReferenceParts.join(":") : null;
-        const owner = input.slackUserId ?? "unknown_slack_user";
-        const rawNotes = notes
-          ? `Manual Slack update. Owner: ${owner}. Notes: ${notes}`
-          : `Manual Slack update. Owner: ${owner}.`;
-
-        const saved = await dependencies.createEtaUpdate({
-          vendorName: "Manual Slack update",
-          poNumber: pending.poNumber,
-          netsuitePoInternalId: null,
-          itemNumber: null,
-          netsuiteItemInternalId: null,
-          etaDate: pending.etaDate ?? null,
-          trackingNumber: pending.trackingNumber ?? null,
-          updateScope: "po_all_lines",
-          sourceType: "slack",
-          sourceReference,
-          rawNotes,
-          confidence: 0.95,
-          status: "parsed"
-        });
 
         const existingRequest = await dependencies.findLatestEtaUpdateActionRequestByEtaId(saved.id);
         let actionRequestId = existingRequest?.id ?? null;
         if (!actionRequestId) {
           actionRequestId = await dependencies.createAgentActionRequest({
-            requestedBy: owner,
+            requestedBy: ownerId,
             source: "slack",
             actionType: "eta_update",
             requiresApproval: true,
@@ -229,7 +253,8 @@ export async function handleEtaSlackCapture(input: {
               slack_message_ts: input.slackMessageTs ?? null,
               extraction_confidence: "HIGH",
               eta_source: "manual_slack",
-              eta_update_owner: owner
+              eta_update_owner: ownerDisplayName,
+              eta_update_owner_slack_user_id: ownerId
             },
             previewJson: {
               eta_update_id: saved.id,
@@ -238,7 +263,8 @@ export async function handleEtaSlackCapture(input: {
               update_scope: saved.updateScope,
               tracking_number: saved.trackingNumber,
               eta_source: "manual_slack",
-              eta_update_owner: owner,
+              eta_update_owner: ownerDisplayName,
+              eta_update_owner_slack_user_id: ownerId,
               extraction_confidence: "HIGH",
               notes: notes ?? null
             },
@@ -262,23 +288,25 @@ export async function handleEtaSlackCapture(input: {
               requestedBySlackUserId: input.slackUserId,
               confidence: "HIGH",
               etaSource: "manual_slack",
+              etaUpdateOwner: ownerDisplayName,
               notes: notes ?? "Assumed manual entry from Slack."
             });
           }
         }
 
-        logger.info("eta_manual_slack.approval_created", {
-          poNumber: pending.poNumber,
-          actionRequestId,
-          slackUserId: input.slackUserId ?? null
-        });
-        await input.reply(`Saved manual ETA update for ${pending.poNumber}. Approval request: ${actionRequestId ?? "existing request"}.`);
-        return true;
-      } catch (error) {
-        pendingManualEtaConversations.delete(key);
-        logger.error("eta_manual_slack.failed", error);
-        await input.reply("I hit an error while creating this ETA approval. Please try again.");
-        return true;
+          logger.info("eta_manual_slack.approval_created", {
+            poNumber: pending.poNumber,
+            actionRequestId,
+            slackUserId: input.slackUserId ?? null
+          });
+          await input.reply(`Saved manual ETA update for ${pending.poNumber}. Approval request: ${actionRequestId ?? "existing request"}.`);
+          return true;
+        } catch (error) {
+          pendingManualEtaConversations.delete(key);
+          logger.error("eta_manual_slack.failed", error);
+          await input.reply("I hit an error while creating this ETA approval. Please try again.");
+          return true;
+        }
       }
     }
   }
@@ -290,7 +318,8 @@ export async function handleEtaSlackCapture(input: {
       slackUserId: input.slackUserId ?? "",
       slackChannelId: input.slackChannelId ?? "",
       threadTs: input.threadTs ?? input.slackMessageTs,
-      awaiting: "eta_date"
+      currentStep: "eta_date",
+      lastUpdatedAt: dependencies.now().toISOString()
     });
     logger.info("eta_manual_slack.started", {
       poNumber: manualPoNumber,
@@ -298,7 +327,7 @@ export async function handleEtaSlackCapture(input: {
       slackChannelId: input.slackChannelId ?? null
     });
     logger.info("eta_manual_slack.date_requested", { poNumber: manualPoNumber });
-    await input.reply(`Manual ETA update started for ${manualPoNumber}. What is the ETA date?`);
+    await input.reply(`What ETA date should I use for ${manualPoNumber}? Type \`exit\` anytime to cancel.`);
     return true;
   }
 

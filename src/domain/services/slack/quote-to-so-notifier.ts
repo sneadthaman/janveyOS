@@ -115,3 +115,45 @@ export async function notifyQuoteToSoCompleted(input: QuoteToSoCompletionNotific
     text
   });
 }
+
+const slackUserDisplayNameCache = new Map<string, string>();
+
+function pickSlackDisplayName(profile: Record<string, unknown> | null | undefined): string | null {
+  if (!profile) return null;
+  const realName = typeof profile.real_name === "string" ? profile.real_name.trim() : "";
+  if (realName) return realName;
+  const displayName = typeof profile.display_name === "string" ? profile.display_name.trim() : "";
+  if (displayName) return displayName;
+  const username = typeof profile.name === "string" ? profile.name.trim() : "";
+  if (username) return username;
+  return null;
+}
+
+export async function resolveSlackUserDisplayName(slackUserId: string): Promise<string> {
+  const userId = slackUserId.trim();
+  if (!userId) return slackUserId;
+  const cached = slackUserDisplayNameCache.get(userId);
+  if (cached) return cached;
+  if (!config.SLACK_BOT_TOKEN) return userId;
+
+  try {
+    const response = await fetch("https://slack.com/api/users.info", {
+      method: "POST",
+      headers: {
+        authorization: `Bearer ${config.SLACK_BOT_TOKEN}`,
+        "content-type": "application/json; charset=utf-8"
+      },
+      body: JSON.stringify({ user: userId })
+    });
+    const result = (await response.json().catch(() => ({}))) as Record<string, unknown>;
+    const ok = result.ok === true;
+    if (!response.ok || !ok) return userId;
+    const user = (result.user ?? null) as Record<string, unknown> | null;
+    const profile = (user?.profile ?? null) as Record<string, unknown> | null;
+    const selected = (pickSlackDisplayName(profile) ?? (typeof user?.name === "string" ? user.name.trim() : "")) || userId;
+    slackUserDisplayNameCache.set(userId, selected);
+    return selected;
+  } catch {
+    return userId;
+  }
+}
