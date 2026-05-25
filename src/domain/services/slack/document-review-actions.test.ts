@@ -40,8 +40,7 @@ function makeJoined(status: "pending" | "approved" | "rejected" = "approved") {
 test("approve action handler calls approve service and updates card", async () => {
   let approveCalls = 0;
   let rejectCalls = 0;
-  let updateCalls = 0;
-  let updatedText = "";
+  let executionCalls = 0;
 
   const result = await handleDocumentReviewActionWithDeps(
     {
@@ -61,9 +60,10 @@ test("approve action handler calls approve service and updates card", async () =
         return {} as any;
       },
       loadReviewWithCandidate: async () => makeJoined("approved"),
-      updateSlackMessage: async () => {
-        updateCalls += 1;
-        updatedText = "called";
+      updateSlackMessage: async () => undefined,
+      handleEtaUpdateApprovalAction: async () => {
+        executionCalls += 1;
+        return { kind: "ok", message: "Approved. Applying ETA update…" } as any;
       }
     } as any
   );
@@ -71,13 +71,12 @@ test("approve action handler calls approve service and updates card", async () =
   assert.equal(result.kind, "ok");
   assert.equal(approveCalls, 1);
   assert.equal(rejectCalls, 0);
-  assert.equal(updateCalls, 1);
-  assert.equal(updatedText, "called");
+  assert.equal(executionCalls, 1);
   assert.match(result.message, /Action request: req-1/);
 });
 
-test("approve action updates message to queued state", async () => {
-  let lastPayload: Record<string, unknown> | null = null;
+test("approve action delegates to ETA execution pipeline", async () => {
+  let executionPayload: Record<string, unknown> | null = null;
   const result = await handleDocumentReviewActionWithDeps(
     {
       actionId: "document_review_eta_approve",
@@ -90,14 +89,17 @@ test("approve action updates message to queued state", async () => {
       approveEtaReviewById: async () => ({ review: { id: "review-1" }, actionRequestId: "req-1" }) as any,
       rejectEtaReviewById: async () => ({}) as any,
       loadReviewWithCandidate: async () => makeJoined("approved"),
-      updateSlackMessage: async (payload: Record<string, unknown>) => {
-        lastPayload = payload;
+      updateSlackMessage: async () => undefined,
+      handleEtaUpdateApprovalAction: async (payload: Record<string, unknown>) => {
+        executionPayload = payload;
+        return { kind: "ok", message: "" } as any;
       }
     } as any
   );
 
   assert.equal(result.kind, "ok");
-  assert.equal(String(lastPayload?.["text"] ?? ""), "Approved — queued for NetSuite ETA update");
+  assert.equal(String(executionPayload?.["actionId"] ?? ""), "eta_update_approve_request");
+  assert.equal(String(executionPayload?.["actorSlackUserId"] ?? ""), "U123");
 });
 
 test("reject action handler calls reject service and updates card", async () => {
@@ -125,7 +127,8 @@ test("reject action handler calls reject service and updates card", async () => 
       loadReviewWithCandidate: async () => makeJoined("rejected"),
       updateSlackMessage: async () => {
         updateCalls += 1;
-      }
+      },
+      handleEtaUpdateApprovalAction: async () => ({ kind: "ok", message: "" } as any)
     } as any
   );
 

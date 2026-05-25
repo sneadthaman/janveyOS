@@ -1,6 +1,7 @@
 import { approveEtaReviewById, rejectEtaReviewById } from "../../documents/eta-candidate-review-service.js";
 import { loadReviewWithCandidate } from "../../documents/eta-candidate-review-repository.js";
 import { buildDocumentReviewFallbackText, buildEtaCandidateReviewBlocks } from "./document-review-card.js";
+import { handleEtaUpdateApprovalAction } from "./eta-update-approval.js";
 import { updateSlackMessage } from "./quote-to-so-notifier.js";
 
 export type DocumentReviewActionId = "document_review_eta_approve" | "document_review_eta_reject" | "document_review_eta_ignore";
@@ -10,13 +11,15 @@ interface ActionDeps {
   rejectEtaReviewById: typeof rejectEtaReviewById;
   loadReviewWithCandidate: typeof loadReviewWithCandidate;
   updateSlackMessage: typeof updateSlackMessage;
+  handleEtaUpdateApprovalAction: typeof handleEtaUpdateApprovalAction;
 }
 
 const defaultDeps: ActionDeps = {
   approveEtaReviewById,
   rejectEtaReviewById,
   loadReviewWithCandidate,
-  updateSlackMessage
+  updateSlackMessage,
+  handleEtaUpdateApprovalAction
 };
 
 function parseReviewId(value: string): string | null {
@@ -94,22 +97,17 @@ export async function handleDocumentReviewActionWithDeps(
         reviewedBy: input.actorSlackUserId,
         reviewerNotes: "Approved from Slack"
       });
-      if (input.slackChannelId && input.slackMessageTs) {
-        await deps.updateSlackMessage({
-          channel: input.slackChannelId,
-          ts: input.slackMessageTs,
-          text: "Approved — queued for NetSuite ETA update",
-          blocks: [
-            {
-              type: "section",
-              text: {
-                type: "mrkdwn",
-                text: `✅ *Approved — queued for NetSuite ETA update*\n• Action request ID: ${result.actionRequestId}`
-              }
-            }
-          ]
-        });
-      }
+      const execution = await deps.handleEtaUpdateApprovalAction({
+        actionId: "eta_update_approve_request",
+        actorSlackUserId: input.actorSlackUserId,
+        slackChannelId: input.slackChannelId,
+        slackMessageTs: input.slackMessageTs,
+        value: JSON.stringify({
+          actionRequestId: result.actionRequestId,
+          etaUpdateId: reviewId
+        })
+      });
+      if (execution.kind === "unauthorized") return { kind: "error", message: execution.message };
       return { kind: "ok", message: `Approved. Action request: ${result.actionRequestId}` };
     }
 
