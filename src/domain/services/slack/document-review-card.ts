@@ -59,9 +59,9 @@ function truncateRawContext(value: string | null | undefined, max = 500): string
 }
 
 function statusTitle(input: EtaReviewCardInput): string {
-  if (input.reviewStatus === "approved") return "✅ ETA Candidate Review Approved";
-  if (input.reviewStatus === "rejected") return "🚫 ETA Candidate Review Rejected";
-  return "🧾 ETA Candidate Review";
+  if (input.reviewStatus === "approved") return "✅ ETA update review approved";
+  if (input.reviewStatus === "rejected") return "🚫 ETA update review rejected";
+  return "🧾 ETA update review needed";
 }
 
 function statusDetails(input: EtaReviewCardInput): string {
@@ -81,8 +81,8 @@ export function buildDocumentReviewFallbackText(input: EtaReviewCardInput): stri
 export function buildEtaCandidateReviewBlocks(input: EtaReviewCardInput): Array<Record<string, unknown>> {
   const excerpt = truncateRawContext(input.rawContext, 500);
   const body =
-    `${statusTitle(input)}\n` +
-    `• Review ID: ${input.reviewId}\n` +
+    `*${statusTitle(input)}*\n` +
+    `• Review: ${input.reviewId}\n` +
     `• PO number: ${input.poNumber || "-"}\n` +
     `• ETA date: ${input.etaDate || "-"}\n` +
     `• ETA date source: ${input.etaDateSource || "-"}\n` +
@@ -99,8 +99,7 @@ export function buildEtaCandidateReviewBlocks(input: EtaReviewCardInput): Array<
       ocrUsed: input.ocrUsed
     })}\n` +
     `• Source file: ${input.sourceFile || "-"}\n` +
-    `• Classification: ${input.classification || "-"}\n` +
-    `• Raw context: ${excerpt}`;
+    `• Classification: ${input.classification || "-"}`;
 
   const blocks: Array<Record<string, unknown>> = [
     {
@@ -124,6 +123,16 @@ export function buildEtaCandidateReviewBlocks(input: EtaReviewCardInput): Array<
     });
     return blocks;
   }
+
+  blocks.push({
+    type: "context",
+    elements: [
+      {
+        type: "mrkdwn",
+        text: `Raw context: ${excerpt}`
+      }
+    ]
+  });
 
   blocks.push({
     type: "actions",
