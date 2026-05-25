@@ -50,6 +50,7 @@ const schema = z.object({
   MICROSOFT_GRAPH_USER_EMAIL: optionalEnvString,
   MICROSOFT_GRAPH_APPROVAL_SLACK_CHANNEL_ID: optionalEnvString,
   MICROSOFT_GRAPH_AI_ETA_FOLDER_NAME: optionalEnvString,
+  ETA_EMAIL_POST_REVIEWS_TO_SLACK: z.preprocess((value) => parseBooleanEnv(value), z.boolean()).default(false),
   MICROSOFT_GRAPH_POLL_INTERVAL_MS: z.coerce.number().optional(),
   MICROSOFT_GRAPH_TENANT_ID: optionalEnvString,
   MICROSOFT_GRAPH_CLIENT_ID: optionalEnvString,

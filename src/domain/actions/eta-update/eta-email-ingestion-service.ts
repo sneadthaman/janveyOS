@@ -16,7 +16,8 @@ import {
 import { ingestPdfDocument, type IngestPdfDocumentInput } from "../../documents/document-ingestion-service.js";
 import { ingestTextDocument } from "../../documents/text-document-ingestion-service.js";
 import { processIngestedDocument } from "../../documents/document-extraction-service.js";
-import { createPendingReviewForCandidate } from "../../documents/eta-candidate-review-service.js";
+import { createPendingReviewForCandidateWithStatus } from "../../documents/eta-candidate-review-service.js";
+import { postPendingEtaReviewToSlack } from "../../services/slack/document-review-notifier.js";
 
 type EtaEmailIngestionDependencies = {
   findMailFolderByDisplayName: typeof findMailFolderByDisplayName;
@@ -29,7 +30,8 @@ type EtaEmailIngestionDependencies = {
   ingestPdfDocument: (input: IngestPdfDocumentInput) => ReturnType<typeof ingestPdfDocument>;
   ingestTextDocument: typeof ingestTextDocument;
   processIngestedDocument: typeof processIngestedDocument;
-  createPendingReviewForCandidate: typeof createPendingReviewForCandidate;
+  createPendingReviewForCandidateWithStatus: typeof createPendingReviewForCandidateWithStatus;
+  postPendingEtaReviewToSlack: typeof postPendingEtaReviewToSlack;
 };
 
 const defaultDependencies: EtaEmailIngestionDependencies = {
@@ -43,7 +45,8 @@ const defaultDependencies: EtaEmailIngestionDependencies = {
   ingestPdfDocument,
   ingestTextDocument,
   processIngestedDocument,
-  createPendingReviewForCandidate
+  createPendingReviewForCandidateWithStatus,
+  postPendingEtaReviewToSlack
 };
 
 function htmlToText(input: string) {
@@ -76,8 +79,44 @@ async function createReviewsForDocument(
 
   let reviewCount = 0;
   for (const candidate of extraction.candidates) {
-    await deps.createPendingReviewForCandidate(candidate.id);
+    const createdReview = await deps.createPendingReviewForCandidateWithStatus(candidate.id);
     reviewCount += 1;
+    logger.info("eta_email.review_created", {
+      messageId: input.messageId,
+      sourceType: input.sourceType,
+      documentId: input.documentId,
+      candidateId: candidate.id,
+      reviewId: createdReview.review.id,
+      created: createdReview.created
+    });
+
+    if (!config.ETA_EMAIL_POST_REVIEWS_TO_SLACK) continue;
+    if (!createdReview.created) {
+      logger.info("eta_email.review_post_skipped_existing", {
+        messageId: input.messageId,
+        reviewId: createdReview.review.id,
+        candidateId: candidate.id
+      });
+      continue;
+    }
+
+    try {
+      const posted = await deps.postPendingEtaReviewToSlack(createdReview.review.id);
+      if (posted) {
+        logger.info("eta_email.review_posted_to_slack", {
+          messageId: input.messageId,
+          reviewId: createdReview.review.id,
+          candidateId: candidate.id
+        });
+      }
+    } catch (error) {
+      logger.error("eta_email.review_post_failed", {
+        messageId: input.messageId,
+        reviewId: createdReview.review.id,
+        candidateId: candidate.id,
+        reason: error instanceof Error ? error.message : String(error)
+      });
+    }
   }
 
   logger.info("eta_email.candidate_reviews_created", {

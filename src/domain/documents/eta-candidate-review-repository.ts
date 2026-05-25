@@ -23,6 +23,11 @@ export interface EtaCandidateReviewWithContext {
   document: Awaited<ReturnType<typeof findIngestedDocumentById>>;
 }
 
+export interface CreatePendingReviewResult {
+  review: EtaCandidateReview;
+  created: boolean;
+}
+
 interface ReviewRepositoryDeps {
   findById: (reviewId: string) => Promise<Record<string, unknown> | null>;
   findByCandidateId: (candidateId: string) => Promise<Record<string, unknown> | null>;
@@ -106,15 +111,23 @@ export async function findReviewByIdWithDeps(reviewId: string, deps: ReviewRepos
 }
 
 export async function createPendingReviewWithDeps(candidateId: string, deps: ReviewRepositoryDeps): Promise<EtaCandidateReview> {
+  const result = await createPendingReviewResultWithDeps(candidateId, deps);
+  return result.review;
+}
+
+export async function createPendingReviewResultWithDeps(
+  candidateId: string,
+  deps: ReviewRepositoryDeps
+): Promise<CreatePendingReviewResult> {
   const existing = await findReviewByCandidateIdWithDeps(candidateId, deps);
-  if (existing) return existing;
+  if (existing) return { review: existing, created: false };
 
   const row = await deps.insertReview({
     eta_update_candidate_id: candidateId,
     review_status: "pending",
     updated_at: new Date().toISOString()
   });
-  return normalizeReview(row);
+  return { review: normalizeReview(row), created: true };
 }
 
 export async function findPendingReviewsWithDeps(limit: number, deps: ReviewRepositoryDeps): Promise<EtaCandidateReview[]> {

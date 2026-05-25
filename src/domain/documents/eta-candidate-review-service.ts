@@ -63,6 +63,15 @@ export async function createPendingReviewForCandidate(candidateId: string): Prom
   return defaultDeps.createPendingReview(candidateId);
 }
 
+export async function createPendingReviewForCandidateWithStatus(
+  candidateId: string
+): Promise<{ review: EtaCandidateReview; created: boolean }> {
+  const existing = await defaultDeps.findReviewByCandidateId(candidateId);
+  if (existing) return { review: existing, created: false };
+  const review = await defaultDeps.createPendingReview(candidateId);
+  return { review, created: true };
+}
+
 function ensureCandidateValue(value: string | null | undefined, fieldName: string) {
   const normalized = typeof value === "string" ? value.trim() : "";
   if (!normalized) throw new Error(`ETA candidate is missing required field: ${fieldName}`);

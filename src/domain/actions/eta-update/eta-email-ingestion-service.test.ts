@@ -18,7 +18,8 @@ function baseDeps(overrides: Record<string, unknown> = {}) {
       extraction: { classification: "eta_update" },
       candidates: [{ id: "cand-1" }]
     }),
-    createPendingReviewForCandidate: async () => ({ id: "review-1", reviewStatus: "pending" }),
+    createPendingReviewForCandidateWithStatus: async () => ({ review: { id: "review-1", reviewStatus: "pending" }, created: true }),
+    postPendingEtaReviewToSlack: async () => true,
     ...overrides
   };
 }
@@ -75,9 +76,9 @@ test("OCR-backed ingested document produces ETA review for RJ Schinner", async (
         extraction: { classification: "invoice_with_shipping_signal" },
         candidates: [{ id: "cand-rj", poNumber: "PO289824", etaDate: "2026-05-26", carrier: "RJ_SCHINNER_TRUCK", appliesToEntirePo: true }]
       }),
-      createPendingReviewForCandidate: async (candidateId: string) => {
+      createPendingReviewForCandidateWithStatus: async (candidateId: string) => {
         reviewIds.push(candidateId);
-        return { id: "review-rj", reviewStatus: "pending" };
+        return { review: { id: "review-rj", reviewStatus: "pending" }, created: true };
       }
     }) as any
   );
@@ -111,9 +112,9 @@ test("duplicate existing completed document still creates/reuses pending review 
       downloadFileAttachment: async () => Buffer.from("dup"),
       ingestPdfDocument: async () => ({ id: "doc-dup", extractionStatus: "completed", extractionMethod: "ocr", ocrUsed: true }),
       processIngestedDocument: async () => ({ extraction: { classification: "eta_update" }, candidates: [{ id: "cand-dup" }] }),
-      createPendingReviewForCandidate: async () => {
+      createPendingReviewForCandidateWithStatus: async () => {
         reviewCalls += 1;
-        return { id: "review-dup", reviewStatus: "pending" };
+        return { review: { id: "review-dup", reviewStatus: "pending" }, created: true };
       }
     }) as any
   );
@@ -126,14 +127,110 @@ test("duplicate existing completed document still creates/reuses pending review 
       downloadFileAttachment: async () => Buffer.from("dup"),
       ingestPdfDocument: async () => ({ id: "doc-dup", extractionStatus: "completed", extractionMethod: "ocr", ocrUsed: true }),
       processIngestedDocument: async () => ({ extraction: { classification: "eta_update" }, candidates: [{ id: "cand-dup" }] }),
-      createPendingReviewForCandidate: async () => {
+      createPendingReviewForCandidateWithStatus: async () => {
         reviewCalls += 1;
-        return { id: "review-dup", reviewStatus: "pending" };
+        return { review: { id: "review-dup", reviewStatus: "pending" }, created: false };
       }
     }) as any
   );
 
   assert.equal(reviewCalls, 2);
+});
+
+test("when slack-post flag enabled and new review created, notifier called", async () => {
+  const prevFlag = config.ETA_EMAIL_POST_REVIEWS_TO_SLACK;
+  config.ETA_EMAIL_POST_REVIEWS_TO_SLACK = true;
+  let postCalls = 0;
+  try {
+    const result = await processEtaGraphMessage(
+      { id: "m4c", subject: "ETA", bodyText: "" },
+      "AI ETA",
+      baseDeps({
+        listMessageAttachments: async () => [{ id: "a1", name: "file.pdf", contentType: "application/pdf", size: 100 }],
+        downloadFileAttachment: async () => Buffer.from("pdf"),
+        createPendingReviewForCandidateWithStatus: async () => ({ review: { id: "review-new", reviewStatus: "pending" }, created: true }),
+        postPendingEtaReviewToSlack: async () => {
+          postCalls += 1;
+          return true;
+        }
+      }) as any
+    );
+    assert.equal(result.status, "approval_created");
+    assert.equal(postCalls, 1);
+  } finally {
+    config.ETA_EMAIL_POST_REVIEWS_TO_SLACK = prevFlag;
+  }
+});
+
+test("when slack-post flag disabled, notifier not called", async () => {
+  const prevFlag = config.ETA_EMAIL_POST_REVIEWS_TO_SLACK;
+  config.ETA_EMAIL_POST_REVIEWS_TO_SLACK = false;
+  let postCalls = 0;
+  try {
+    const result = await processEtaGraphMessage(
+      { id: "m4d", subject: "ETA", bodyText: "" },
+      "AI ETA",
+      baseDeps({
+        listMessageAttachments: async () => [{ id: "a1", name: "file.pdf", contentType: "application/pdf", size: 100 }],
+        downloadFileAttachment: async () => Buffer.from("pdf"),
+        postPendingEtaReviewToSlack: async () => {
+          postCalls += 1;
+          return true;
+        }
+      }) as any
+    );
+    assert.equal(result.status, "approval_created");
+    assert.equal(postCalls, 0);
+  } finally {
+    config.ETA_EMAIL_POST_REVIEWS_TO_SLACK = prevFlag;
+  }
+});
+
+test("existing review does not repost when flag enabled", async () => {
+  const prevFlag = config.ETA_EMAIL_POST_REVIEWS_TO_SLACK;
+  config.ETA_EMAIL_POST_REVIEWS_TO_SLACK = true;
+  let postCalls = 0;
+  try {
+    const result = await processEtaGraphMessage(
+      { id: "m4e", subject: "ETA", bodyText: "" },
+      "AI ETA",
+      baseDeps({
+        listMessageAttachments: async () => [{ id: "a1", name: "file.pdf", contentType: "application/pdf", size: 100 }],
+        downloadFileAttachment: async () => Buffer.from("pdf"),
+        createPendingReviewForCandidateWithStatus: async () => ({ review: { id: "review-existing", reviewStatus: "pending" }, created: false }),
+        postPendingEtaReviewToSlack: async () => {
+          postCalls += 1;
+          return true;
+        }
+      }) as any
+    );
+    assert.equal(result.status, "approval_created");
+    assert.equal(postCalls, 0);
+  } finally {
+    config.ETA_EMAIL_POST_REVIEWS_TO_SLACK = prevFlag;
+  }
+});
+
+test("Slack post failure logs/continues", async () => {
+  const prevFlag = config.ETA_EMAIL_POST_REVIEWS_TO_SLACK;
+  config.ETA_EMAIL_POST_REVIEWS_TO_SLACK = true;
+  try {
+    const result = await processEtaGraphMessage(
+      { id: "m4f", subject: "ETA", bodyText: "" },
+      "AI ETA",
+      baseDeps({
+        listMessageAttachments: async () => [{ id: "a1", name: "file.pdf", contentType: "application/pdf", size: 100 }],
+        downloadFileAttachment: async () => Buffer.from("pdf"),
+        createPendingReviewForCandidateWithStatus: async () => ({ review: { id: "review-fail", reviewStatus: "pending" }, created: true }),
+        postPendingEtaReviewToSlack: async () => {
+          throw new Error("slack down");
+        }
+      }) as any
+    );
+    assert.equal(result.status, "approval_created");
+  } finally {
+    config.ETA_EMAIL_POST_REVIEWS_TO_SLACK = prevFlag;
+  }
 });
 
 test("body-only email fallback remains if no PDF attachments", async () => {
