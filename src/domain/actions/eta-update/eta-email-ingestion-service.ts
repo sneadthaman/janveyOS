@@ -7,42 +7,29 @@ import {
   listMessagesInFolder,
   type GraphMailMessage
 } from "../../../integrations/microsoft-graph/client.js";
-import { extractPdfText } from "../../documents/pdf-text-extractor.js";
-import { lookupOpenPurchaseOrder } from "../../../integrations/netsuite/client.js";
 import {
   createEtaEmailIngestion,
   findEtaEmailIngestionByGraphMessageId,
   updateEtaEmailIngestion,
   type EtaEmailIngestionRow
 } from "./eta-email-ingestion-repository.js";
-import { createEtaUpdate, attachActionRequestToEtaUpdate } from "./eta-update-repository.js";
-import {
-  createAgentActionRequest,
-  findExistingEtaUpdateActionRequest,
-  findLatestEtaUpdateActionRequestByEtaId
-} from "../../repositories/agent-log-repository.js";
-import { notifyEtaUpdateApprovalRequested } from "../../services/slack/eta-update-approval.js";
-import { postSlackMessage } from "../../services/slack/quote-to-so-notifier.js";
-import { extractEtaPayloadFromEmail, hasEnoughEtaInfo } from "./eta-email-extraction-service.js";
+import { ingestPdfDocument, type IngestPdfDocumentInput } from "../../documents/document-ingestion-service.js";
+import { ingestTextDocument } from "../../documents/text-document-ingestion-service.js";
+import { processIngestedDocument } from "../../documents/document-extraction-service.js";
+import { createPendingReviewForCandidate } from "../../documents/eta-candidate-review-service.js";
 
 type EtaEmailIngestionDependencies = {
   findMailFolderByDisplayName: typeof findMailFolderByDisplayName;
   listMessagesInFolder: typeof listMessagesInFolder;
   listMessageAttachments: typeof listMessageAttachments;
   downloadFileAttachment: typeof downloadFileAttachment;
-  extractPdfText: typeof extractPdfText;
   findEtaEmailIngestionByGraphMessageId: typeof findEtaEmailIngestionByGraphMessageId;
   createEtaEmailIngestion: typeof createEtaEmailIngestion;
   updateEtaEmailIngestion: typeof updateEtaEmailIngestion;
-  extractEtaPayloadFromEmail: typeof extractEtaPayloadFromEmail;
-  lookupOpenPurchaseOrder: typeof lookupOpenPurchaseOrder;
-  createEtaUpdate: typeof createEtaUpdate;
-  findLatestEtaUpdateActionRequestByEtaId: typeof findLatestEtaUpdateActionRequestByEtaId;
-  findExistingEtaUpdateActionRequest: typeof findExistingEtaUpdateActionRequest;
-  createAgentActionRequest: typeof createAgentActionRequest;
-  attachActionRequestToEtaUpdate: typeof attachActionRequestToEtaUpdate;
-  notifyEtaUpdateApprovalRequested: typeof notifyEtaUpdateApprovalRequested;
-  postSlackMessage: typeof postSlackMessage;
+  ingestPdfDocument: (input: IngestPdfDocumentInput) => ReturnType<typeof ingestPdfDocument>;
+  ingestTextDocument: typeof ingestTextDocument;
+  processIngestedDocument: typeof processIngestedDocument;
+  createPendingReviewForCandidate: typeof createPendingReviewForCandidate;
 };
 
 const defaultDependencies: EtaEmailIngestionDependencies = {
@@ -50,19 +37,13 @@ const defaultDependencies: EtaEmailIngestionDependencies = {
   listMessagesInFolder,
   listMessageAttachments,
   downloadFileAttachment,
-  extractPdfText,
   findEtaEmailIngestionByGraphMessageId,
   createEtaEmailIngestion,
   updateEtaEmailIngestion,
-  extractEtaPayloadFromEmail,
-  lookupOpenPurchaseOrder,
-  createEtaUpdate,
-  findLatestEtaUpdateActionRequestByEtaId,
-  findExistingEtaUpdateActionRequest,
-  createAgentActionRequest,
-  attachActionRequestToEtaUpdate,
-  notifyEtaUpdateApprovalRequested,
-  postSlackMessage
+  ingestPdfDocument,
+  ingestTextDocument,
+  processIngestedDocument,
+  createPendingReviewForCandidate
 };
 
 function htmlToText(input: string) {
@@ -79,172 +60,35 @@ function htmlToText(input: string) {
     .trim();
 }
 
-function normalizePoNumber(poNumber: string | null) {
-  if (!poNumber) return null;
-  const cleaned = poNumber.trim().toUpperCase().replace(/^PO\s*-?/, "PO");
-  const m = cleaned.match(/^PO(\d{3,20})$/);
-  if (!m) return null;
-  return `PO${m[1]}`;
+function isEtaLikeClassification(value: string) {
+  return value === "eta_update" || value === "invoice_with_shipping_signal";
 }
 
-async function createApprovalForEta(input: {
-  etaUpdateId: string;
-  graphMessageId: string;
-  vendorName: string;
-  poNumber: string;
-  etaDate: string | null;
-  trackingNumber: string | null;
-  confidence: string;
-  etaSource: string;
-  sender: string | null;
-  subject: string | null;
-  sourceReference: string;
-  notes: string;
-  itemsSummary: string;
-}, deps: EtaEmailIngestionDependencies = defaultDependencies) {
-  const existingRequest = await deps.findExistingEtaUpdateActionRequest({
-    etaUpdateId: input.etaUpdateId,
-    graphMessageId: input.graphMessageId
-  });
-  if (existingRequest) return existingRequest.id;
-
-  const actionRequestId = await deps.createAgentActionRequest({
-    requestedBy: "system:email_ingestion",
-    source: "email",
-    actionType: "eta_update",
-    requiresApproval: true,
-    inputJson: {
-      eta_update_id: input.etaUpdateId,
-      vendor_name: input.vendorName,
-      po_number: input.poNumber,
-      eta_date: input.etaDate,
-      tracking_number: input.trackingNumber,
-      update_scope: "po_all_lines",
-      raw_notes: input.notes,
-      source_type: "email",
-      source_reference: input.sourceReference,
-      email_sender: input.sender,
-      email_subject: input.subject,
-      extraction_confidence: input.confidence,
-      eta_source: input.etaSource,
-      proposed_affected_lines: input.itemsSummary,
-      graph_message_id: input.graphMessageId
-    },
-    previewJson: {
-      eta_update_id: input.etaUpdateId,
-      po_number: input.poNumber,
-      eta_date: input.etaDate,
-      tracking_number: input.trackingNumber,
-      eta_source: input.etaSource,
-      source_folder: config.MICROSOFT_GRAPH_AI_ETA_FOLDER_NAME || "AI ETA",
-      graph_message_id: input.graphMessageId
-    },
-    status: "pending"
-  });
-
-  await deps.attachActionRequestToEtaUpdate(input.etaUpdateId, actionRequestId);
-
-  return actionRequestId;
-}
-
-function parseLabeledDate(text: string, labelRegex: RegExp): string | null {
-  const match = text.match(labelRegex);
-  if (!match?.[1]) return null;
-  const raw = match[1].trim();
-  const short = raw.match(/(\d{1,2})[\/-](\d{1,2})(?:[\/-](\d{2,4}))?/);
-  if (short) {
-    const m = Number(short[1]);
-    const d = Number(short[2]);
-    let y = short[3] ? Number(short[3]) : new Date().getFullYear();
-    if (y < 100) y += 2000;
-    return `${String(y).padStart(4, "0")}-${String(m).padStart(2, "0")}-${String(d).padStart(2, "0")}`;
-  }
-  const month = raw.match(
-    /(Jan|January|Feb|February|Mar|March|Apr|April|May|Jun|June|Jul|July|Aug|August|Sep|Sept|September|Oct|October|Nov|November|Dec|December)\s+(\d{1,2})(?:,\s*(\d{4}))?/i
-  );
-  if (!month) return null;
-  const mm: Record<string, number> = {
-    jan: 1, january: 1, feb: 2, february: 2, mar: 3, march: 3, apr: 4, april: 4, may: 5, jun: 6, june: 6, jul: 7, july: 7, aug: 8, august: 8, sep: 9, sept: 9, september: 9, oct: 10, october: 10, nov: 11, november: 11, dec: 12, december: 12
-  };
-  const m = mm[month[1].toLowerCase()];
-  const d = Number(month[2]);
-  const y = month[3] ? Number(month[3]) : new Date().getFullYear();
-  return `${String(y).padStart(4, "0")}-${String(m).padStart(2, "0")}-${String(d).padStart(2, "0")}`;
-}
-
-function addDays(isoDate: string, days: number): string {
-  const [y, m, d] = isoDate.split("-").map(Number);
-  const dt = new Date(Date.UTC(y, m - 1, d));
-  dt.setUTCDate(dt.getUTCDate() + days);
-  return `${dt.getUTCFullYear().toString().padStart(4, "0")}-${(dt.getUTCMonth() + 1).toString().padStart(2, "0")}-${dt.getUTCDate().toString().padStart(2, "0")}`;
-}
-
-function isSssVendorContext(input: { sender: string; subject: string; body: string; vendorName: string | null }) {
-  const combined = `${input.sender}\n${input.subject}\n${input.body}\n${input.vendorName ?? ""}`.toLowerCase();
-  return combined.includes("triple s") || /\bsss\b/i.test(combined) || combined.includes("standardized sanitation systems");
-}
-
-function applySssAssumedEta(input: {
-  sender: string;
-  subject: string;
-  combinedSourceText: string;
-  extracted: Awaited<ReturnType<typeof extractEtaPayloadFromEmail>>;
-}) {
-  const isSss = isSssVendorContext({
-    sender: input.sender,
-    subject: input.subject,
-    body: input.combinedSourceText,
-    vendorName: input.extracted.vendorName
-  });
-  if (!isSss) return input.extracted;
-
-  const invoiceDate =
-    parseLabeledDate(input.combinedSourceText, /\bInvoice\s*Date\s*:?\s*([A-Za-z0-9,\/ -]+)/i) ??
-    parseLabeledDate(input.combinedSourceText, /\bInv\s*Date\s*:?\s*([A-Za-z0-9,\/ -]+)/i) ??
-    parseLabeledDate(input.combinedSourceText, /\bDate\s*:?\s*([A-Za-z0-9,\/ -]+)/i);
-
-  if (invoiceDate) {
-    logger.info("eta_email.sss_invoice_date_detected", {
-      sender: input.sender || null,
-      subject: input.subject || null,
-      invoiceDate
-    });
+async function createReviewsForDocument(
+  input: { documentId: string; messageId: string; sourceType: "email_attachment" | "email_body" },
+  deps: EtaEmailIngestionDependencies
+) {
+  const extraction = await deps.processIngestedDocument(input.documentId);
+  const classification = extraction.extraction.classification;
+  if (!isEtaLikeClassification(classification)) {
+    return { classification, candidateCount: extraction.candidates.length, reviewCount: 0 };
   }
 
-  if (input.extracted.etaDate) {
-    logger.info("eta_email.sss_assumed_eta_skipped", {
-      reason: "explicit_eta_present",
-      etaDate: input.extracted.etaDate,
-      invoiceDate: invoiceDate ?? null
-    });
-    return input.extracted;
+  let reviewCount = 0;
+  for (const candidate of extraction.candidates) {
+    await deps.createPendingReviewForCandidate(candidate.id);
+    reviewCount += 1;
   }
 
-  if (!invoiceDate) {
-    logger.info("eta_email.sss_assumed_eta_skipped", {
-      reason: "missing_invoice_date"
-    });
-    return input.extracted;
-  }
-
-  const assumedEta = addDays(invoiceDate, 4);
-  logger.info("eta_email.sss_assumed_eta_applied", {
-    invoiceDate,
-    assumedEta
+  logger.info("eta_email.candidate_reviews_created", {
+    messageId: input.messageId,
+    sourceType: input.sourceType,
+    documentId: input.documentId,
+    classification,
+    candidateCount: extraction.candidates.length,
+    reviewCount
   });
-
-  return {
-    ...input.extracted,
-    etaDate: assumedEta,
-    etaSource: "sss_invoice_date_plus_4_days",
-    etaNotes: [
-      input.extracted.etaNotes || "",
-      "Assumed ETA calculated from SSS invoice date + 4 calendar days."
-    ]
-      .filter(Boolean)
-      .join(" ")
-      .trim()
-  };
+  return { classification, candidateCount: extraction.candidates.length, reviewCount };
 }
 
 export async function processEtaGraphMessage(
@@ -260,53 +104,11 @@ export async function processEtaGraphMessage(
   const bodyText = (message.bodyText && message.bodyText.trim()) || (message.bodyHtml ? htmlToText(message.bodyHtml) : "") || message.bodyPreview || "";
   const userEmail = String(config.MICROSOFT_GRAPH_USER_EMAIL ?? "").trim();
   const attachments = userEmail ? await deps.listMessageAttachments({ userEmail, messageId: message.id }) : [];
-  const pdfTexts: string[] = [];
-
-  for (const attachment of attachments) {
+  const pdfAttachments = attachments.filter((attachment) => {
     const contentType = String(attachment.contentType ?? "").toLowerCase();
-    const isPdf = contentType === "application/pdf" || attachment.name.toLowerCase().endsWith(".pdf");
-    logger.info("eta_email.attachment_detected", {
-      messageId: message.id,
-      subject: message.subject ?? null,
-      sender: message.sender ?? null,
-      fileName: attachment.name,
-      size: attachment.size ?? null,
-      isPdf
-    });
-    if (!isPdf) continue;
-
-    try {
-      const buffer = await deps.downloadFileAttachment({ userEmail, messageId: message.id, attachmentId: attachment.id });
-      logger.info("eta_email.pdf_attachment_downloaded", {
-        messageId: message.id,
-        fileName: attachment.name,
-        size: attachment.size ?? buffer.byteLength
-      });
-      const text = await deps.extractPdfText(buffer);
-      logger.info("eta_email.pdf_text_extracted", {
-        messageId: message.id,
-        fileName: attachment.name,
-        extractedLength: text.length
-      });
-      if (text.trim()) pdfTexts.push(text.trim());
-    } catch (error) {
-      logger.warn("eta_email.pdf_text_extract_failed", {
-        messageId: message.id,
-        fileName: attachment.name,
-        reason: error instanceof Error ? error.message : String(error)
-      });
-    }
-  }
-
-  const combinedSourceText = [bodyText, ...pdfTexts].filter(Boolean).join("\n\n");
-  logger.info("eta_email.combined_source_prepared", {
-    messageId: message.id,
-    subject: message.subject ?? null,
-    sender: message.sender ?? null,
-    bodyLength: bodyText.length,
-    pdfCount: pdfTexts.length,
-    combinedLength: combinedSourceText.length
+    return contentType === "application/pdf" || attachment.name.toLowerCase().endsWith(".pdf");
   });
+
   const ingestion = await deps.createEtaEmailIngestion({
     graphMessageId: message.id,
     internetMessageId: message.internetMessageId ?? null,
@@ -320,155 +122,113 @@ export async function processEtaGraphMessage(
   });
 
   let row: EtaEmailIngestionRow = ingestion;
-  try {
-    const extractedRaw = await deps.extractEtaPayloadFromEmail({
-      subject: message.subject ?? "",
-      sender: message.sender ?? "",
-      bodyText: combinedSourceText || bodyText
-    });
-    const extracted = applySssAssumedEta({
-      sender: message.sender ?? "",
-      subject: message.subject ?? "",
-      combinedSourceText: combinedSourceText || bodyText,
-      extracted: extractedRaw
-    });
 
-    if (!hasEnoughEtaInfo(extracted)) {
+  try {
+    let processedDocuments = 0;
+    let reviewsCreated = 0;
+
+    if (pdfAttachments.length > 0) {
+      for (const attachment of pdfAttachments) {
+        try {
+          const buffer = await deps.downloadFileAttachment({ userEmail, messageId: message.id, attachmentId: attachment.id });
+          const ingested = await deps.ingestPdfDocument({
+            source: "email_attachment",
+            sourceMailbox: userEmail,
+            sourceFolder: folderName,
+            sourceFolderHint: "vendor_eta",
+            sourceMessageId: message.id,
+            sourceSender: message.sender ?? null,
+            sourceSubject: message.subject ?? null,
+            sourceReceivedAt: message.receivedDateTime ?? null,
+            fileName: attachment.name,
+            mimeType: attachment.contentType ?? "application/pdf",
+            fileSizeBytes: attachment.size ?? buffer.byteLength,
+            buffer,
+            storagePath: null
+          });
+
+          logger.info("eta_email.document_ingested", {
+            messageId: message.id,
+            fileName: attachment.name,
+            extractionStatus: ingested.extractionStatus,
+            extractionMethod: ingested.extractionMethod ?? null,
+            ocrUsed: ingested.ocrUsed ?? false
+          });
+
+          if (ingested.extractionStatus !== "completed") {
+            logger.warn("eta_email.document_ingestion_failed", {
+              messageId: message.id,
+              fileName: attachment.name,
+              extractionStatus: ingested.extractionStatus,
+              extractionMethod: ingested.extractionMethod ?? null,
+              ocrUsed: ingested.ocrUsed ?? false
+            });
+            continue;
+          }
+
+          const outcome = await createReviewsForDocument(
+            { documentId: ingested.id, messageId: message.id, sourceType: "email_attachment" },
+            deps
+          );
+          processedDocuments += 1;
+          reviewsCreated += outcome.reviewCount;
+        } catch (error) {
+          logger.warn("eta_email.document_ingestion_failed", {
+            messageId: message.id,
+            fileName: attachment.name,
+            reason: error instanceof Error ? error.message : String(error)
+          });
+        }
+      }
+    } else if (bodyText.trim()) {
+      const ingestedBody = await deps.ingestTextDocument({
+        source: "email_body",
+        sourceMailbox: userEmail,
+        sourceFolder: folderName,
+        sourceFolderHint: "vendor_eta",
+        sourceMessageId: message.id,
+        sourceSender: message.sender ?? null,
+        sourceSubject: message.subject ?? null,
+        sourceReceivedAt: message.receivedDateTime ?? null,
+        fileName: `eta-email-body-${message.id}.txt`,
+        mimeType: "text/plain",
+        fileSizeBytes: Buffer.byteLength(bodyText, "utf8"),
+        text: bodyText
+      });
+      const outcome = await createReviewsForDocument(
+        { documentId: ingestedBody.document.id, messageId: message.id, sourceType: "email_body" },
+        deps
+      );
+      processedDocuments += 1;
+      reviewsCreated += outcome.reviewCount;
+    }
+
+    if (reviewsCreated === 0) {
       logger.info("eta_email.no_eta_found", {
         messageId: message.id,
         subject: message.subject ?? null,
         sender: message.sender ?? null,
         hadBodyText: Boolean(bodyText.trim()),
-        hadPdfText: pdfTexts.length > 0
+        hadPdf: pdfAttachments.length > 0
       });
       row = await deps.updateEtaEmailIngestion({
         id: row.id,
         extractionStatus: "failed",
-        extractedPayload: extracted as unknown as Record<string, unknown>,
-        errorMessage: "Extraction missing PO number or ETA/tracking info."
+        errorMessage: "No ETA-like candidates found from ingested documents."
       });
       return { status: "skipped" as const, reason: "no_eta_found", row };
     }
 
-    const poNumber = normalizePoNumber(extracted.poNumber);
-    if (!poNumber) {
-      row = await deps.updateEtaEmailIngestion({
-        id: row.id,
-        extractionStatus: "failed",
-        extractedPayload: extracted as unknown as Record<string, unknown>,
-        errorMessage: "PO number missing or invalid in extraction payload."
-      });
-      return { status: "failed" as const, reason: "missing_po", row };
-    }
-
-    const poLookupPayload = { po: poNumber };
-    logger.info("eta_email_ingestion.po_lookup.request", poLookupPayload);
-    const poLookup = await deps.lookupOpenPurchaseOrder(poLookupPayload);
-    const poLookupSuccess =
-      poLookup.success === true ||
-      ((poLookup as unknown as Record<string, unknown>).status === true &&
-        (poLookup as unknown as Record<string, unknown>).data &&
-        typeof (poLookup as unknown as Record<string, unknown>).data === "object");
-    const poLookupData =
-      poLookupSuccess && (poLookup as unknown as Record<string, unknown>).status === true
-        ? (((poLookup as unknown as Record<string, unknown>).data as Record<string, unknown> | undefined) ?? {})
-        : {};
-
-    if (!poLookupSuccess) {
-      row = await deps.updateEtaEmailIngestion({
-        id: row.id,
-        extractionStatus: "failed",
-        extractedPayload: {
-          extracted,
-          poLookup
-        } as unknown as Record<string, unknown>,
-        errorMessage: `Open PO lookup failed for ${poNumber}: ${poLookup.message ?? poLookup.code ?? "not found"}`
-      });
-      return { status: "failed" as const, reason: "po_not_found", row };
-    }
-
     row = await deps.updateEtaEmailIngestion({
-      id: row.id,
-      extractionStatus: "extracted",
-      extractedPayload: {
-        extracted,
-        poLookup
-      } as unknown as Record<string, unknown>,
-      errorMessage: null
-    });
-
-    const etaUpdate = await deps.createEtaUpdate({
-      vendorName: extracted.vendorName ?? poLookup.vendorName ?? (typeof poLookupData.vendorName === "string" ? poLookupData.vendorName : "Unknown"),
-      poNumber,
-      netsuitePoInternalId:
-        poLookup.poInternalId ?? (typeof poLookupData.poInternalId === "string" ? poLookupData.poInternalId : null),
-      etaDate: extracted.etaDate,
-      trackingNumber: extracted.trackingNumber,
-      updateScope: "po_all_lines",
-      sourceType: "email",
-      sourceReference: `${folderName}:${message.id}`,
-      rawNotes: extracted.etaNotes || combinedSourceText || bodyText,
-      confidence: extracted.confidence === "HIGH" ? 0.95 : extracted.confidence === "MED" ? 0.8 : 0.7,
-      status: "parsed"
-    });
-
-    const itemsSummary = extracted.items
-      .map((item) => [item.item ?? "(item)", item.etaDate ?? "(no eta)", item.trackingNumber ?? ""].join(" | "))
-      .join("; ");
-
-    const actionRequestId = await createApprovalForEta(
-      {
-      etaUpdateId: etaUpdate.id,
-      graphMessageId: message.id,
-      vendorName: etaUpdate.vendorName,
-      poNumber,
-      etaDate: etaUpdate.etaDate,
-      trackingNumber: etaUpdate.trackingNumber,
-      confidence: extracted.confidence,
-      etaSource: extracted.etaSource,
-      sender: message.sender ?? null,
-      subject: message.subject ?? null,
-      sourceReference: `${folderName}:${message.id}`,
-      notes: extracted.etaNotes || combinedSourceText || bodyText,
-      itemsSummary
-      },
-      deps
-    );
-
-    await deps.updateEtaEmailIngestion({
       id: row.id,
       extractionStatus: "approval_created",
       extractedPayload: {
-        ...(row.extracted_payload ?? {}),
-        etaUpdateId: etaUpdate.id,
-        actionRequestId
+        processedDocuments,
+        reviewsCreated
       },
       errorMessage: null
     });
-
-    await deps.notifyEtaUpdateApprovalRequested({
-      postMessage: async (payload) => {
-        const channel = String(config.MICROSOFT_GRAPH_APPROVAL_SLACK_CHANNEL_ID ?? "").trim();
-        if (!channel) return;
-        await deps.postSlackMessage({ channel, text: payload.text, blocks: payload.blocks });
-      },
-      actionRequestId,
-      etaUpdateId: etaUpdate.id,
-      vendorName: etaUpdate.vendorName,
-      poNumber,
-      etaDate: etaUpdate.etaDate ?? "-",
-      trackingNumber: etaUpdate.trackingNumber,
-      requestedBySlackUserId: null,
-      sender: message.sender ?? null,
-      subject: message.subject ?? null,
-      confidence: extracted.confidence,
-      etaSource: extracted.etaSource,
-      sourceFolder: folderName,
-      proposedAffectedLines: itemsSummary || null,
-      notes: extracted.etaNotes || null
-    });
-
-    return { status: "approval_created" as const, actionRequestId };
+    return { status: "approval_created" as const, reviewsCreated };
   } catch (error) {
     const messageText = error instanceof Error ? error.message : "Unknown email ingestion error";
     await deps.updateEtaEmailIngestion({
