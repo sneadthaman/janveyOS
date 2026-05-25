@@ -302,7 +302,24 @@ export function extractEtaUpdateCandidates(text: string, options?: ExtractorOpti
     return Math.min(score, 0.99);
   })();
 
-  if (po || etaDate || tracking || lineLevelItem) {
+  if (vendorProfile === "rj_schinner_acknowledgement" && po && etaDate && itemLines.length > 0) {
+    for (const line of itemLines) {
+      candidates.push({
+        poNumber: po,
+        etaDate,
+        etaDateSource,
+        etaDateIsEstimated,
+        baseDate,
+        baseDateSource,
+        trackingNumber: tracking,
+        carrier,
+        itemNumber: line.itemNumber,
+        appliesToEntirePo: false,
+        confidence,
+        rawContext: `RJ Schinner acknowledgement ship date ${etaDate} for item ${line.itemNumber}`
+      });
+    }
+  } else if (po || etaDate || tracking || lineLevelItem) {
     candidates.push({
       poNumber: po,
       etaDate,
@@ -315,7 +332,10 @@ export function extractEtaUpdateCandidates(text: string, options?: ExtractorOpti
       itemNumber: resolvedAppliesToEntirePo && vendorProfile === "rj_schinner_acknowledgement" ? null : lineLevelItem,
       appliesToEntirePo: resolvedAppliesToEntirePo,
       confidence,
-      rawContext: lines.slice(0, 6).join("\n")
+      rawContext:
+        vendorProfile === "rj_schinner_acknowledgement" && etaDate
+          ? `RJ Schinner acknowledgement ship date ${etaDate}`
+          : lines.slice(0, 6).join("\n")
     });
   }
 

@@ -12,6 +12,8 @@ interface EtaReviewCardInput {
   itemNumber?: string | null;
   appliesToEntirePo?: boolean;
   confidence?: number | string | null;
+  extractionMethod?: string | null;
+  ocrUsed?: boolean;
   sourceFile?: string | null;
   classification?: string | null;
   rawContext?: string | null;
@@ -21,10 +23,32 @@ interface EtaReviewCardInput {
   reviewerNotes?: string | null;
 }
 
-function formatConfidence(value: number | string | null | undefined): string {
-  if (typeof value === "number") return value.toFixed(2);
-  if (typeof value === "string" && value.trim()) return value.trim();
-  return "-";
+export function formatEtaConfidence(input: {
+  confidence?: number | string | null;
+  etaDateSource?: string | null;
+  extractionMethod?: string | null;
+  ocrUsed?: boolean;
+}): "HIGH" | "MED" | "LOW" {
+  const etaDateSource = String(input.etaDateSource ?? "").trim().toLowerCase();
+  if (etaDateSource === "ship_date") return "HIGH";
+  if (etaDateSource.includes("carrier_confirmed") || etaDateSource.includes("api_confirmed")) return "HIGH";
+  if (etaDateSource.includes("plus_4_days")) return "LOW";
+  if (input.ocrUsed && etaDateSource === "ship_date") return "HIGH";
+
+  const numeric = typeof input.confidence === "number" ? input.confidence : Number(input.confidence);
+  if (Number.isFinite(numeric)) {
+    if (numeric >= 0.85) return "HIGH";
+    if (numeric >= 0.65) return "MED";
+  }
+  return "LOW";
+}
+
+export function formatEtaScope(input: { appliesToEntirePo?: boolean; itemNumber?: string | null; rawContext?: string | null }): string {
+  if (input.itemNumber) return "Matching item line";
+  const context = String(input.rawContext ?? "").toLowerCase();
+  if (context.includes("rj schinner") && !input.appliesToEntirePo) return "Listed RJ Schinner lines";
+  if (input.appliesToEntirePo) return "Entire PO requested";
+  return "Unknown / review carefully";
 }
 
 function truncateRawContext(value: string | null | undefined, max = 500): string {
@@ -51,7 +75,7 @@ function statusDetails(input: EtaReviewCardInput): string {
 }
 
 export function buildDocumentReviewFallbackText(input: EtaReviewCardInput): string {
-  return `Document review ${input.reviewId}: PO ${input.poNumber || "-"}, ETA ${input.etaDate || "-"}, estimated ${input.etaDateIsEstimated ? "yes" : "no"}`;
+  return `Document review ${input.reviewId}: PO ${input.poNumber || "-"}, ETA ${input.etaDate || "-"}`;
 }
 
 export function buildEtaCandidateReviewBlocks(input: EtaReviewCardInput): Array<Record<string, unknown>> {
@@ -61,15 +85,19 @@ export function buildEtaCandidateReviewBlocks(input: EtaReviewCardInput): Array<
     `• Review ID: ${input.reviewId}\n` +
     `• PO number: ${input.poNumber || "-"}\n` +
     `• ETA date: ${input.etaDate || "-"}\n` +
-    `• ETA estimated: ${input.etaDateIsEstimated ? "true" : "false"}\n` +
     `• ETA date source: ${input.etaDateSource || "-"}\n` +
     `• Base date: ${input.baseDate || "-"}\n` +
     `• Base date source: ${input.baseDateSource || "-"}\n` +
     `• Carrier: ${input.carrier || "-"}\n` +
     `• Tracking number: ${input.trackingNumber || "-"}\n` +
     `• Item number: ${input.itemNumber || "-"}\n` +
-    `• Entire PO: ${input.appliesToEntirePo ? "true" : "false"}\n` +
-    `• Confidence: ${formatConfidence(input.confidence)}\n` +
+    `• Scope: ${formatEtaScope({ appliesToEntirePo: input.appliesToEntirePo, itemNumber: input.itemNumber, rawContext: input.rawContext })}\n` +
+    `• Confidence: ${formatEtaConfidence({
+      confidence: input.confidence,
+      etaDateSource: input.etaDateSource,
+      extractionMethod: input.extractionMethod,
+      ocrUsed: input.ocrUsed
+    })}\n` +
     `• Source file: ${input.sourceFile || "-"}\n` +
     `• Classification: ${input.classification || "-"}\n` +
     `• Raw context: ${excerpt}`;

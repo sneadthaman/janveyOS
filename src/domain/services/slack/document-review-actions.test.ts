@@ -41,6 +41,7 @@ test("approve action handler calls approve service and updates card", async () =
   let approveCalls = 0;
   let rejectCalls = 0;
   let updateCalls = 0;
+  let updatedText = "";
 
   const result = await handleDocumentReviewActionWithDeps(
     {
@@ -62,6 +63,7 @@ test("approve action handler calls approve service and updates card", async () =
       loadReviewWithCandidate: async () => makeJoined("approved"),
       updateSlackMessage: async () => {
         updateCalls += 1;
+        updatedText = "called";
       }
     } as any
   );
@@ -70,6 +72,32 @@ test("approve action handler calls approve service and updates card", async () =
   assert.equal(approveCalls, 1);
   assert.equal(rejectCalls, 0);
   assert.equal(updateCalls, 1);
+  assert.equal(updatedText, "called");
+  assert.match(result.message, /Action request: req-1/);
+});
+
+test("approve action updates message to queued state", async () => {
+  let lastPayload: Record<string, unknown> | null = null;
+  const result = await handleDocumentReviewActionWithDeps(
+    {
+      actionId: "document_review_eta_approve",
+      value: JSON.stringify({ reviewId: "review-1" }),
+      actorSlackUserId: "U123",
+      slackChannelId: "C1",
+      slackMessageTs: "111.222"
+    },
+    {
+      approveEtaReviewById: async () => ({ review: { id: "review-1" }, actionRequestId: "req-1" }) as any,
+      rejectEtaReviewById: async () => ({}) as any,
+      loadReviewWithCandidate: async () => makeJoined("approved"),
+      updateSlackMessage: async (payload: Record<string, unknown>) => {
+        lastPayload = payload;
+      }
+    } as any
+  );
+
+  assert.equal(result.kind, "ok");
+  assert.equal(String(lastPayload?.["text"] ?? ""), "Approved — queued for NetSuite ETA update");
 });
 
 test("reject action handler calls reject service and updates card", async () => {

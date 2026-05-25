@@ -22,10 +22,13 @@ test("card formatter includes estimated ETA metadata", () => {
   });
 
   const text = String((blocks[0]?.text as Record<string, unknown>)?.text ?? "");
-  assert.match(text, /ETA estimated: true/);
   assert.match(text, /ETA date source: estimated_from_invoice_date_plus_4_days/);
   assert.match(text, /Base date: 2026-05-25/);
   assert.match(text, /Base date source: invoice_date/);
+  assert.match(text, /Confidence: LOW/);
+  assert.match(text, /Scope: Entire PO requested/);
+  assert.doesNotMatch(text, /Entire PO:/);
+  assert.doesNotMatch(text, /ETA estimated:/);
 });
 
 test("card formatter truncates raw_context to max 500 chars", () => {

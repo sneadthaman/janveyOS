@@ -44,6 +44,8 @@ function toCardInput(joined: NonNullable<Awaited<ReturnType<typeof loadReviewWit
     itemNumber: candidate?.itemNumber,
     appliesToEntirePo: candidate?.appliesToEntirePo,
     confidence: candidate?.confidence,
+    extractionMethod: joined.document?.extractionMethod ?? null,
+    ocrUsed: joined.document?.ocrUsed ?? false,
     sourceFile: joined.document?.fileName,
     classification: joined.extraction?.classification,
     rawContext: candidate?.rawContext

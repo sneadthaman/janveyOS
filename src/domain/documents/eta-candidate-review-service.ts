@@ -1,5 +1,7 @@
 import { createAgentActionRequest } from "../repositories/agent-log-repository.js";
 import { findDocumentExtractionById, findEtaUpdateCandidateById } from "./document-extraction-repository.js";
+import { findById as findIngestedDocumentById } from "./ingested-document-repository.js";
+import { formatEtaConfidence } from "../services/slack/document-review-card.js";
 import {
   approveReview,
   createPendingReview,
@@ -40,6 +42,7 @@ interface RejectEtaReviewInput {
 interface ReviewServiceDeps {
   findEtaUpdateCandidateById: typeof findEtaUpdateCandidateById;
   findDocumentExtractionById: typeof findDocumentExtractionById;
+  findIngestedDocumentById: typeof findIngestedDocumentById;
   createPendingReview: typeof createPendingReview;
   findReviewById: typeof findReviewById;
   findReviewByCandidateId: typeof findReviewByCandidateId;
@@ -51,6 +54,7 @@ interface ReviewServiceDeps {
 const defaultDeps: ReviewServiceDeps = {
   findEtaUpdateCandidateById,
   findDocumentExtractionById,
+  findIngestedDocumentById,
   createPendingReview,
   findReviewById,
   findReviewByCandidateId,
@@ -87,6 +91,14 @@ export async function approveEtaCandidateWithDeps(
   if (!candidate) throw new Error(`ETA candidate not found: ${input.candidateId}`);
   const extraction = await resolved.findDocumentExtractionById(candidate.documentExtractionId);
   const sourceDocumentId = extraction?.documentId ?? null;
+  let sourceDocument: Awaited<ReturnType<typeof findIngestedDocumentById>> = null;
+  if (sourceDocumentId) {
+    try {
+      sourceDocument = await resolved.findIngestedDocumentById(sourceDocumentId);
+    } catch {
+      sourceDocument = null;
+    }
+  }
 
   const poNumber = ensureCandidateValue(candidate.poNumber, "po_number");
   const etaDate = ensureCandidateValue(candidate.etaDate, "eta_date");
@@ -104,6 +116,13 @@ export async function approveEtaCandidateWithDeps(
   if (review.reviewStatus === "rejected") {
     throw new Error("Rejected ETA candidate reviews cannot be approved. Create a new candidate instead.");
   }
+
+  const confidenceLabel = formatEtaConfidence({
+    confidence: candidate.confidence,
+    etaDateSource: candidate.etaDateSource,
+    extractionMethod: sourceDocument?.extractionMethod ?? null,
+    ocrUsed: sourceDocument?.ocrUsed ?? false
+  });
 
   const payload: Record<string, unknown> = {
     poNumber,
@@ -125,12 +144,18 @@ export async function approveEtaCandidateWithDeps(
     item_number: candidate.itemNumber,
     appliesToEntirePo: candidate.appliesToEntirePo,
     applies_to_entire_po: candidate.appliesToEntirePo,
+    confidenceLabel,
+    confidence_label: confidenceLabel,
     sourceDocumentId,
     source_document_id: sourceDocumentId,
     sourceDocumentExtractionId: candidate.documentExtractionId,
     source_document_extraction_id: candidate.documentExtractionId,
     sourceCandidateId: candidate.id,
     source_candidate_id: candidate.id,
+    extractionMethod: sourceDocument?.extractionMethod ?? null,
+    extraction_method: sourceDocument?.extractionMethod ?? null,
+    ocrUsed: sourceDocument?.ocrUsed ?? false,
+    ocr_used: sourceDocument?.ocrUsed ?? false,
     rawContext: candidate.rawContext,
     raw_context: candidate.rawContext
   };

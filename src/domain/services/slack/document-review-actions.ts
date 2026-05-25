@@ -49,6 +49,8 @@ function toCardInput(joined: NonNullable<Awaited<ReturnType<typeof loadReviewWit
     itemNumber: candidate?.itemNumber,
     appliesToEntirePo: candidate?.appliesToEntirePo,
     confidence: candidate?.confidence,
+    extractionMethod: joined.document?.extractionMethod ?? null,
+    ocrUsed: joined.document?.ocrUsed ?? false,
     sourceFile: joined.document?.fileName,
     classification: joined.extraction?.classification,
     rawContext: candidate?.rawContext
@@ -92,7 +94,22 @@ export async function handleDocumentReviewActionWithDeps(
         reviewedBy: input.actorSlackUserId,
         reviewerNotes: "Approved from Slack"
       });
-      await refreshCard(reviewId, deps, input.slackChannelId, input.slackMessageTs);
+      if (input.slackChannelId && input.slackMessageTs) {
+        await deps.updateSlackMessage({
+          channel: input.slackChannelId,
+          ts: input.slackMessageTs,
+          text: "Approved — queued for NetSuite ETA update",
+          blocks: [
+            {
+              type: "section",
+              text: {
+                type: "mrkdwn",
+                text: `✅ *Approved — queued for NetSuite ETA update*\n• Action request ID: ${result.actionRequestId}`
+              }
+            }
+          ]
+        });
+      }
       return { kind: "ok", message: `Approved. Action request: ${result.actionRequestId}` };
     }
 

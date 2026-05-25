@@ -94,7 +94,7 @@ test("SSS invoice shipped quantity without tracking still creates estimated ETA 
   assert.equal(candidates[0]?.trackingNumber, null);
 });
 
-test("RJ Schinner acknowledgement extracts ship date as ETA and entire-PO candidate", () => {
+test("RJ Schinner acknowledgement extracts line-level ETA candidates when item lines exist", () => {
   const text = [
     "RJ Schinner",
     "Acknowledgement",
@@ -117,13 +117,17 @@ test("RJ Schinner acknowledgement extracts ship date as ETA and entire-PO candid
     now: new Date("2026-05-24T00:00:00Z")
   });
 
-  assert.equal(candidates.length, 1);
+  assert.equal(candidates.length, 3);
   assert.equal(candidates[0]?.poNumber, "PO289824");
   assert.equal(candidates[0]?.etaDate, "2026-05-26");
   assert.equal(candidates[0]?.etaDateIsEstimated, false);
   assert.equal(candidates[0]?.etaDateSource, "ship_date");
   assert.equal(candidates[0]?.carrier, "RJ_SCHINNER_TRUCK");
-  assert.equal(candidates[0]?.appliesToEntirePo, true);
+  assert.equal(candidates[0]?.appliesToEntirePo, false);
+  assert.deepEqual(
+    candidates.map((c) => c.itemNumber),
+    ["30359", "02001", "30358"]
+  );
 });
 
 test("RJ Schinner OCR-like acknowledgement text with P0O typo still extracts ETA candidate", () => {
@@ -142,11 +146,11 @@ test("RJ Schinner OCR-like acknowledgement text with P0O typo still extracts ETA
     now: new Date("2026-05-24T00:00:00Z")
   });
 
-  assert.equal(candidates.length, 1);
+  assert.equal(candidates.length, 3);
   assert.equal(candidates[0]?.poNumber, "PO289824");
   assert.equal(candidates[0]?.etaDate, "2026-05-26");
   assert.equal(candidates[0]?.carrier, "RJ_SCHINNER_TRUCK");
-  assert.equal(candidates[0]?.appliesToEntirePo, true);
+  assert.equal(candidates[0]?.appliesToEntirePo, false);
 });
 
 test("RJ Schinner item lines are parsed into extraction metadata helper", () => {

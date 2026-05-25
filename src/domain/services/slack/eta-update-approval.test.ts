@@ -182,7 +182,7 @@ test("successful approve updates Slack from applying to completed with final det
 
   await new Promise((resolve) => setTimeout(resolve, 0));
   assert.equal(updates.length, 2);
-  assert.equal(updates[0]?.text, "⏳ Applying ETA update...");
+  assert.equal(updates[0]?.text, "Approved — queued for NetSuite ETA update");
   const finalUpdate = updates[updates.length - 1];
   assert.equal(finalUpdate?.text, "✅ ETA update applied");
   const finalText = String(finalUpdate?.blocks?.[0]?.text && typeof finalUpdate.blocks[0].text === "object" ? (finalUpdate.blocks[0].text as Record<string, unknown>).text : "");
@@ -216,6 +216,7 @@ test("failed approve updates Slack from applying to failed and shows no NetSuite
 
   await new Promise((resolve) => setTimeout(resolve, 0));
   assert.equal(updates.length, 2);
+  assert.equal(updates[0]?.text, "Approved — queued for NetSuite ETA update");
   const finalUpdate = updates[updates.length - 1];
   assert.equal(finalUpdate?.text, "❌ ETA update failed");
   const finalText = String(finalUpdate?.blocks?.[0]?.text && typeof finalUpdate.blocks[0].text === "object" ? (finalUpdate.blocks[0].text as Record<string, unknown>).text : "");
@@ -225,4 +226,52 @@ test("failed approve updates Slack from applying to failed and shows no NetSuite
   assert.match(finalText, /No NetSuite changes were applied/i);
   const hasActionsBlock = (finalUpdate?.blocks ?? []).some((b) => b.type === "actions");
   assert.equal(hasActionsBlock, false);
+});
+
+test("completion includes warning when updated line count is less than requested item count", async () => {
+  const updates: Array<{ text: string; blocks?: Array<Record<string, unknown>> }> = [];
+  await handleEtaUpdateApprovalAction(
+    {
+      actionId: "eta_update_approve_request",
+      actorSlackUserId: "U-ADMIN",
+      slackChannelId: "C1",
+      slackMessageTs: "123.456",
+      value: JSON.stringify({ actionRequestId: "req-eta-1", etaUpdateId: "eta-1", poNumber: "PO289807", etaDate: "2026-06-03" })
+    },
+    deps({
+      claimApprovedActionRequest: async () =>
+        ({
+          id: "req-eta-1",
+          action_type: "eta_update",
+          input_json: { po_number: "PO289807", eta_date: "2026-06-03", item_number: "30359", confidence_label: "HIGH" },
+          retry_count: 0
+        }) as any,
+      executeClaimedActionRequest: async () =>
+        ({
+          ok: true,
+          result: {
+            executionStatus: "success",
+            poNumber: "PO289807",
+            etaDate: "2026-06-03",
+            etaConfidence: "HIGH",
+            linesUpdated: 0,
+            unmatchedItemNumbers: ["30359"],
+            netsuiteResponse: { message: "PO ETA update completed" }
+          }
+        }) as any,
+      updateSlackMessage: async (payload: { text: string; blocks?: Array<Record<string, unknown>> }) => {
+        updates.push(payload);
+      }
+    }) as any
+  );
+
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  const finalUpdate = updates[updates.length - 1];
+  const combinedText = (finalUpdate?.blocks ?? [])
+    .map((b) => (b.text && typeof b.text === "object" ? String((b.text as Record<string, unknown>).text ?? "") : ""))
+    .join("\n");
+  assert.match(combinedText, /Some requested lines were not updated/i);
+  assert.match(combinedText, /Requested item count: 1/);
+  assert.match(combinedText, /Updated line count: 0/);
+  assert.match(combinedText, /30359/);
 });

@@ -67,6 +67,22 @@ function buildEtaRunningBlocks(input: { poNumber?: string | null; etaDate?: stri
   ] as Array<Record<string, unknown>>;
 }
 
+function buildEtaQueuedBlocks(input: { actionRequestId: string; poNumber?: string | null; etaDate?: string | null }) {
+  return [
+    {
+      type: "section",
+      text: {
+        type: "mrkdwn",
+        text:
+          "✅ *Approved — queued for NetSuite ETA update*\n" +
+          `• PO: ${input.poNumber || "-"}\n` +
+          `• ETA: ${input.etaDate || "-"}\n` +
+          `• Request: ${input.actionRequestId}`
+      }
+    }
+  ] as Array<Record<string, unknown>>;
+}
+
 function buildEtaCompletionBlocks(input: {
   success: boolean;
   actionRequestId: string;
@@ -75,9 +91,18 @@ function buildEtaCompletionBlocks(input: {
   confidence?: string | null;
   linesUpdated?: number | null;
   netsuiteMessage?: string | null;
+  requestedItemCount?: number | null;
+  unmatchedItemNumbers?: string[] | null;
   safeErrorMessage?: string | null;
 }) {
   if (input.success) {
+    const hasPartialWarning =
+      typeof input.requestedItemCount === "number" &&
+      input.requestedItemCount > 0 &&
+      typeof input.linesUpdated === "number" &&
+      input.linesUpdated < input.requestedItemCount;
+    const unmatchedText =
+      input.unmatchedItemNumbers && input.unmatchedItemNumbers.length > 0 ? input.unmatchedItemNumbers.join(", ") : "-";
     return [
       {
         type: "section",
@@ -92,7 +117,22 @@ function buildEtaCompletionBlocks(input: {
             `• NetSuite: ${input.netsuiteMessage || "-"}\n` +
             `_Ref: ${input.actionRequestId}_`
         }
-      }
+      },
+      ...(hasPartialWarning
+        ? [
+            {
+              type: "section",
+              text: {
+                type: "mrkdwn",
+                text:
+                  "⚠️ *Some requested lines were not updated*\n" +
+                  `• Requested item count: ${input.requestedItemCount}\n` +
+                  `• Updated line count: ${typeof input.linesUpdated === "number" ? input.linesUpdated : "-"}\n` +
+                  `• Unmatched item numbers: ${unmatchedText}`
+              }
+            }
+          ]
+        : [])
     ] as Array<Record<string, unknown>>;
   }
 
@@ -296,8 +336,8 @@ export async function handleEtaUpdateApprovalAction(input: {
       await deps.updateSlackMessage({
         channel: input.slackChannelId,
         ts: input.slackMessageTs,
-        text: "⏳ Applying ETA update...",
-        blocks: buildEtaRunningBlocks({ poNumber: parsed.poNumber ?? "-", etaDate: parsed.etaDate ?? "-" })
+        text: "Approved — queued for NetSuite ETA update",
+        blocks: buildEtaQueuedBlocks({ actionRequestId: approved.id, poNumber: parsed.poNumber ?? "-", etaDate: parsed.etaDate ?? "-" })
       });
     }
 
@@ -354,10 +394,18 @@ export async function handleEtaUpdateApprovalAction(input: {
         const poNumber = String(output.poNumber ?? parsed.poNumber ?? inputJson.po_number ?? "").trim() || parsed.poNumber || "-";
         const etaDate = String(output.etaDate ?? parsed.etaDate ?? inputJson.eta_date ?? "").trim() || parsed.etaDate || "-";
         const confidence = String(
-          output.etaConfidence ?? inputJson.eta_confidence ?? inputJson.extraction_confidence ?? "-"
+          output.etaConfidence ?? inputJson.confidence_label ?? inputJson.eta_confidence ?? inputJson.extraction_confidence ?? "-"
         ).trim();
         const linesUpdated =
           typeof output.linesUpdated === "number" ? output.linesUpdated : null;
+        const requestedItemCount = Array.isArray(inputJson.requested_item_numbers)
+          ? inputJson.requested_item_numbers.length
+          : typeof inputJson.item_number === "string" && inputJson.item_number.trim()
+            ? 1
+            : null;
+        const unmatchedItemNumbers = Array.isArray(output.unmatchedItemNumbers)
+          ? output.unmatchedItemNumbers.filter((v) => typeof v === "string") as string[]
+          : null;
         const netsuiteResponse =
           output.netsuiteResponse && typeof output.netsuiteResponse === "object"
             ? (output.netsuiteResponse as Record<string, unknown>)
@@ -390,6 +438,8 @@ export async function handleEtaUpdateApprovalAction(input: {
                 etaDate,
                 confidence,
                 linesUpdated,
+                requestedItemCount,
+                unmatchedItemNumbers,
                 netsuiteMessage
               })
             });
