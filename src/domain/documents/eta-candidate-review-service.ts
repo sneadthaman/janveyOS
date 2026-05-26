@@ -123,8 +123,23 @@ export async function approveEtaCandidateWithDeps(
     extractionMethod: sourceDocument?.extractionMethod ?? null,
     ocrUsed: sourceDocument?.ocrUsed ?? false
   });
+  const etaUpdateId = candidate.id;
+  const updateScope = candidate.appliesToEntirePo ? "po_all_lines" : candidate.itemNumber ? "item_line" : "unknown";
+  const etaSource = candidate.etaDateSource ?? "document_review";
+  const sourceType = "document_review";
+  const rawNotes = [
+    "source=document_review",
+    sourceDocument?.fileName ? `file=${sourceDocument.fileName}` : null,
+    sourceDocument?.sourceSender ? `sender=${sourceDocument.sourceSender}` : null,
+    candidate.carrier ? `carrier=${candidate.carrier}` : null,
+    candidate.rawContext ? `context=${candidate.rawContext}` : null
+  ]
+    .filter((v): v is string => Boolean(v && v.trim()))
+    .join(" | ");
 
   const payload: Record<string, unknown> = {
+    etaUpdateId,
+    eta_update_id: etaUpdateId,
     poNumber,
     po_number: poNumber,
     etaDate,
@@ -146,10 +161,20 @@ export async function approveEtaCandidateWithDeps(
     applies_to_entire_po: candidate.appliesToEntirePo,
     appliesTo: candidate.appliesToEntirePo ? "all_open_po_lines" : candidate.itemNumber ? "item_line" : "unknown",
     applies_to: candidate.appliesToEntirePo ? "all_open_po_lines" : candidate.itemNumber ? "item_line" : "unknown",
-    updateScope: candidate.appliesToEntirePo ? "po_all_lines" : candidate.itemNumber ? "po_line" : "unknown",
-    update_scope: candidate.appliesToEntirePo ? "po_all_lines" : candidate.itemNumber ? "po_line" : "unknown",
+    updateScope,
+    update_scope: updateScope,
     confidenceLabel,
     confidence_label: confidenceLabel,
+    extractionConfidence: confidenceLabel,
+    extraction_confidence: confidenceLabel,
+    etaSource,
+    eta_source: etaSource,
+    sourceType,
+    source_type: sourceType,
+    vendorName: candidate.carrier ?? "document_review_vendor",
+    vendor_name: candidate.carrier ?? "document_review_vendor",
+    rawNotes,
+    raw_notes: rawNotes,
     sourceDocumentId,
     source_document_id: sourceDocumentId,
     sourceDocumentExtractionId: candidate.documentExtractionId,

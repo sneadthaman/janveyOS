@@ -189,3 +189,39 @@ test("handler treats status/data updater response as executed and maps updatedLi
     config.NETSUITE_PO_ETA_UPDATE_RESTLET_URL = prev;
   }
 });
+
+test("execution handler accepts document_review payload fields", async () => {
+  const prev = config.NETSUITE_PO_ETA_UPDATE_RESTLET_URL;
+  config.NETSUITE_PO_ETA_UPDATE_RESTLET_URL = "https://example.com/eta";
+  let capturedPayload: Record<string, unknown> | null = null;
+
+  try {
+    const result = await runEtaUpdateExecutionHandlerWithDeps(
+      {
+        eta_update_id: "cand-schinner",
+        po_number: "PO289829",
+        eta_date: "2026-05-26",
+        update_scope: "po_all_lines",
+        source_type: "document_review",
+        eta_source: "ship_date",
+        extraction_confidence: "HIGH",
+        raw_notes: "source=document_review | file=S650-test.pdf"
+      },
+      {
+        updatePurchaseOrderEta: async (payload) => {
+          capturedPayload = payload as unknown as Record<string, unknown>;
+          return { success: true, poNumber: "PO289829", linesUpdated: 2 };
+        },
+        markEtaUpdateStatus: async () => undefined
+      }
+    );
+
+    assert.equal(result.success, true);
+    assert.equal(result.etaUpdateId, "cand-schinner");
+    assert.equal(result.poNumber, "PO289829");
+    assert.equal((capturedPayload as any)?.etaSource, "ship_date");
+    assert.equal((capturedPayload as any)?.etaConfidence, "HIGH");
+  } finally {
+    config.NETSUITE_PO_ETA_UPDATE_RESTLET_URL = prev;
+  }
+});

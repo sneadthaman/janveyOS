@@ -63,6 +63,11 @@ test("approveEtaCandidate creates eta_update action request and stores action_re
   assert.equal(result.actionRequestId, "req-123");
   assert.equal(result.review.reviewStatus, "approved");
   assert.equal(result.review.actionRequestId, "req-123");
+  assert.equal((requestPayload as any)?.["eta_update_id"], "cand-1");
+  assert.equal((requestPayload as any)?.["etaUpdateId"], "cand-1");
+  assert.equal((requestPayload as any)?.["source_type"], "document_review");
+  assert.equal((requestPayload as any)?.["eta_source"], "document_review");
+  assert.equal((requestPayload as any)?.["extraction_confidence"], "HIGH");
   assert.equal((requestPayload as any)?.["appliesToEntirePo"], true);
   assert.equal((requestPayload as any)?.["itemNumber"], "123456");
 });
@@ -96,6 +101,45 @@ test("approveEtaCandidate whole-PO candidate sets all-open-lines payload semanti
   assert.equal((requestPayload as any)?.["update_scope"], "po_all_lines");
   assert.equal((requestPayload as any)?.["appliesTo"], "all_open_po_lines");
   assert.equal((requestPayload as any)?.["applies_to"], "all_open_po_lines");
+  assert.equal((requestPayload as any)?.["eta_update_id"], "cand-1");
+  assert.equal((requestPayload as any)?.["source_type"], "document_review");
+  assert.equal((requestPayload as any)?.["extraction_confidence"], "HIGH");
+});
+
+test("Schinner whole-PO review creates executable eta_update payload fields", async () => {
+  let requestPayload: Record<string, unknown> | null = null;
+  await approveEtaCandidateWithDeps(
+    { candidateId: "cand-schinner", reviewedBy: "reviewer-1" },
+    {
+      findEtaUpdateCandidateById: async () =>
+        candidate({
+          id: "cand-schinner",
+          poNumber: "PO289829",
+          etaDate: "2026-05-26",
+          itemNumber: null,
+          appliesToEntirePo: true,
+          carrier: "RJ_SCHINNER_TRUCK",
+          etaDateSource: "ship_date"
+        }) as any,
+      findDocumentExtractionById: async () => ({ id: "extract-1", documentId: "doc-1" }) as any,
+      findIngestedDocumentById: async () => ({ id: "doc-1", fileName: "S650-test.pdf", sourceSender: "ops@rjschinner.com", ocrUsed: true }) as any,
+      createPendingReview: async () => pendingReview({ etaUpdateCandidateId: "cand-schinner" }) as any,
+      findReviewByCandidateId: async () => null,
+      createAgentActionRequest: async (input: Record<string, unknown>) => {
+        requestPayload = (input.inputJson ?? null) as Record<string, unknown> | null;
+        return "req-schinner";
+      },
+      approveReview: async (input) => pendingReview({ reviewStatus: "approved", actionRequestId: input.actionRequestId }) as any,
+      rejectReview: async () => pendingReview({ reviewStatus: "rejected" }) as any
+    }
+  );
+
+  assert.equal((requestPayload as any)?.["po_number"], "PO289829");
+  assert.equal((requestPayload as any)?.["eta_date"], "2026-05-26");
+  assert.equal((requestPayload as any)?.["eta_update_id"], "cand-schinner");
+  assert.equal((requestPayload as any)?.["update_scope"], "po_all_lines");
+  assert.equal((requestPayload as any)?.["source_type"], "document_review");
+  assert.equal((requestPayload as any)?.["extraction_confidence"], "HIGH");
 });
 
 test("approveEtaCandidate rejects missing po_number", async () => {
