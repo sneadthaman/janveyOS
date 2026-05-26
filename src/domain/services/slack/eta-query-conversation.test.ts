@@ -2,70 +2,97 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { debugExtractEtaIntent, handleEtaSlackQuery } from "./eta-query-conversation.js";
 
-test("ETA intent detects common PO ETA phrasing", () => {
-  const intent1 = debugExtractEtaIntent("what's the ETA on PO289731");
-  const intent2 = debugExtractEtaIntent("any updates on PO289731");
-  const intent3 = debugExtractEtaIntent("show ETA for PO289731");
-
-  assert.equal(intent1.matched, true);
-  assert.equal(intent2.matched, true);
-  assert.equal(intent3.matched, true);
-  assert.equal(intent1.poNumber, "PO289731");
+test("lookup intent extracts PO across expected phrasings", () => {
+  const cases = [
+    "what is the ETA of PO289827",
+    "eta PO289827",
+    "ETA for PO289827",
+    "when is PO289827 coming in",
+    "status PO289827"
+  ];
+  for (const text of cases) {
+    const intent = debugExtractEtaIntent(text);
+    assert.equal(intent.matched, true);
+    assert.equal(intent.poNumber, "PO289827");
+  }
 });
 
-test("ETA query returns latest local updates when found", async () => {
+test("update eta intent is not treated as lookup", () => {
+  const intent = debugExtractEtaIntent("update eta PO123456");
+  assert.equal(intent.matched, false);
+});
+
+test("executed action result formats expected response", async () => {
   const replies: string[] = [];
   const handled = await handleEtaSlackQuery(
     {
-      text: "what's the ETA on PO289731",
+      text: "eta for PO289827",
       reply: async (message) => {
         replies.push(message);
       }
     },
     {
-      findEtaUpdatesByPoNumber: async () => [
-        {
-          id: "1",
-          vendorName: "ACME",
-          poNumber: "PO289731",
-          netsuitePoInternalId: null,
-          itemNumber: "ITEM-1",
-          netsuiteItemInternalId: null,
-          etaDate: "2026-06-10",
-          trackingNumber: null,
-          updateScope: "po_line",
-          sourceType: "slack",
-          sourceReference: null,
-          rawNotes: "dock delayed",
-          confidence: 0.92,
-          status: "parsed",
-          createdActionRequestId: null,
-          createdAt: "2026-05-01T00:00:00.000Z",
-          updatedAt: "2026-05-23T00:00:00.000Z"
-        }
-      ]
+      lookupEtaByPoNumber: async () => ({
+        kind: "executed",
+        poNumber: "PO289827",
+        etaDate: "2026-06-02",
+        confidence: "MED",
+        trackingNumber: null,
+        source: "Contec order confirmation / document_review",
+        updatedLines: 4,
+        lastUpdatedAt: "2026-05-26T14:15:00Z"
+      })
     }
   );
-
   assert.equal(handled, true);
-  assert.match(replies[0], /ETA updates for PO289731/i);
-  assert.match(replies[0], /2026-06-10/);
+  assert.match(replies[0], /ETA for PO289827/i);
+  assert.match(replies[0], /Expected ETA: 6\/2\/2026/i);
+  assert.match(replies[0], /Confidence: MED/i);
+  assert.match(replies[0], /Updated lines: 4/i);
 });
 
-test("ETA query returns no-local-update message when not found", async () => {
+test("pending review result formats pending response", async () => {
   const replies: string[] = [];
   const handled = await handleEtaSlackQuery(
     {
-      text: "show ETA for PO289731",
+      text: "status PO289827",
       reply: async (message) => {
         replies.push(message);
       }
     },
     {
-      findEtaUpdatesByPoNumber: async () => []
+      lookupEtaByPoNumber: async () => ({
+        kind: "pending_review",
+        poNumber: "PO289827",
+        etaDate: "2026-06-02",
+        confidence: "MED",
+        trackingNumber: null,
+        source: "Contec order confirmation",
+        status: "pending",
+        lastUpdatedAt: "2026-05-26T14:15:00Z"
+      })
     }
   );
-
   assert.equal(handled, true);
-  assert.match(replies[0], /No local ETA updates found yet for PO289731/i);
+  assert.match(replies[0], /pending review/i);
+  assert.match(replies[0], /Proposed ETA: 6\/2\/2026/i);
+  assert.match(replies[0], /awaiting approval/i);
 });
+
+test("no result formats not-found response", async () => {
+  const replies: string[] = [];
+  const handled = await handleEtaSlackQuery(
+    {
+      text: "eta PO289827",
+      reply: async (message) => {
+        replies.push(message);
+      }
+    },
+    {
+      lookupEtaByPoNumber: async () => ({ kind: "not_found", poNumber: "PO289827" })
+    }
+  );
+  assert.equal(handled, true);
+  assert.match(replies[0], /don’t have an ETA for PO289827 yet/i);
+});
+
