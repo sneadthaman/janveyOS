@@ -45,9 +45,7 @@ export function formatEtaConfidence(input: {
 
 export function formatEtaScope(input: { appliesToEntirePo?: boolean; itemNumber?: string | null; rawContext?: string | null }): string {
   if (input.itemNumber) return "Matching item line";
-  const context = String(input.rawContext ?? "").toLowerCase();
-  if (context.includes("rj schinner") && !input.appliesToEntirePo) return "Listed RJ Schinner lines";
-  if (input.appliesToEntirePo) return "Entire PO requested";
+  if (input.appliesToEntirePo) return "All open PO lines";
   return "Unknown / review carefully";
 }
 

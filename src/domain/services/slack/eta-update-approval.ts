@@ -93,6 +93,7 @@ function buildEtaCompletionBlocks(input: {
   netsuiteMessage?: string | null;
   requestedItemCount?: number | null;
   unmatchedItemNumbers?: string[] | null;
+  skippedClosedWarning?: string | null;
   safeErrorMessage?: string | null;
 }) {
   if (input.success) {
@@ -129,6 +130,20 @@ function buildEtaCompletionBlocks(input: {
                   `• Requested item count: ${input.requestedItemCount}\n` +
                   `• Updated line count: ${typeof input.linesUpdated === "number" ? input.linesUpdated : "-"}\n` +
                   `• Unmatched item numbers: ${unmatchedText}`
+              }
+            }
+          ]
+        : []),
+      ...(!hasPartialWarning &&
+      typeof input.linesUpdated === "number" &&
+      input.linesUpdated === 0 &&
+      input.skippedClosedWarning
+        ? [
+            {
+              type: "section",
+              text: {
+                type: "mrkdwn",
+                text: `⚠️ *No lines updated*\n• ${input.skippedClosedWarning}`
               }
             }
           ]
@@ -416,6 +431,14 @@ export async function handleEtaUpdateApprovalAction(input: {
             : typeof netsuiteResponse?.message === "string"
               ? netsuiteResponse.message
               : null;
+        const skippedClosedWarning = (() => {
+          if (typeof output.skippedClosedWarning === "string" && output.skippedClosedWarning.trim()) {
+            return output.skippedClosedWarning.trim();
+          }
+          const message = String(netsuiteMessage ?? "").trim();
+          if (message && /(closed|skip|skipped|already received)/i.test(message)) return message;
+          return null;
+        })();
 
         if (input.slackChannelId && input.slackMessageTs) {
           logger.info("eta_update.slack_completion_update.before", {
@@ -440,6 +463,7 @@ export async function handleEtaUpdateApprovalAction(input: {
                 linesUpdated,
                 requestedItemCount,
                 unmatchedItemNumbers,
+                skippedClosedWarning,
                 netsuiteMessage
               })
             });

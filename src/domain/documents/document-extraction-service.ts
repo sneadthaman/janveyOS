@@ -1,5 +1,5 @@
 import { classifyDocumentText } from "./document-classifier.js";
-import { detectEtaVendorProfile, extractEtaUpdateCandidates, extractRjSchinnerItemLines } from "./eta-candidate-extractor.js";
+import { detectEtaVendorProfile, extractContecItemLines, extractEtaUpdateCandidates, extractRjSchinnerItemLines } from "./eta-candidate-extractor.js";
 import {
   createDocumentExtraction,
   createEtaUpdateCandidates,
@@ -25,6 +25,7 @@ interface Deps {
   extractEtaUpdateCandidates: typeof extractEtaUpdateCandidates;
   detectEtaVendorProfile: typeof detectEtaVendorProfile;
   extractRjSchinnerItemLines: typeof extractRjSchinnerItemLines;
+  extractContecItemLines: typeof extractContecItemLines;
 }
 
 const defaultDeps: Deps = {
@@ -37,7 +38,8 @@ const defaultDeps: Deps = {
   classifyDocumentText,
   extractEtaUpdateCandidates,
   detectEtaVendorProfile,
-  extractRjSchinnerItemLines
+  extractRjSchinnerItemLines,
+  extractContecItemLines
 };
 
 export interface ProcessIngestedDocumentResult {
@@ -76,7 +78,12 @@ export async function processIngestedDocumentWithDeps(
     sourceFolderHint: document.sourceFolderHint
   });
   const etaVendorProfile = resolved.detectEtaVendorProfile(text, { fileName: document.fileName, sourceSender: document.sourceSender });
-  const rjItemLines = etaVendorProfile === "rj_schinner_acknowledgement" ? resolved.extractRjSchinnerItemLines(text) : [];
+  const extractedItemLines =
+    etaVendorProfile === "rj_schinner_acknowledgement"
+      ? resolved.extractRjSchinnerItemLines(text)
+      : etaVendorProfile === "contec_order_confirmation"
+        ? resolved.extractContecItemLines(text)
+        : [];
 
   const extraction = await resolved.createDocumentExtraction({
     documentId,
@@ -87,7 +94,7 @@ export async function processIngestedDocumentWithDeps(
       reasons: [...classification.reasons, `eta_vendor_profile:${etaVendorProfile}`],
       preview: text.slice(0, 1000),
       eta_vendor_profile: etaVendorProfile,
-      extracted_item_lines: rjItemLines
+      extracted_item_lines: extractedItemLines
     }
   });
 

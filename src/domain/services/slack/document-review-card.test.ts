@@ -26,7 +26,7 @@ test("card formatter includes estimated ETA metadata", () => {
   assert.match(text, /Base date: 2026-05-25/);
   assert.match(text, /Base date source: invoice_date/);
   assert.match(text, /Confidence: LOW/);
-  assert.match(text, /Scope: Entire PO requested/);
+  assert.match(text, /Scope: All open PO lines/);
   assert.doesNotMatch(text, /Entire PO:/);
   assert.doesNotMatch(text, /ETA estimated:/);
 });

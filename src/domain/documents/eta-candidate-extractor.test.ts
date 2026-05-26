@@ -94,7 +94,7 @@ test("SSS invoice shipped quantity without tracking still creates estimated ETA 
   assert.equal(candidates[0]?.trackingNumber, null);
 });
 
-test("RJ Schinner acknowledgement extracts line-level ETA candidates when item lines exist", () => {
+test("RJ Schinner acknowledgement creates one whole-PO ETA candidate even when item lines exist", () => {
   const text = [
     "RJ Schinner",
     "Acknowledgement",
@@ -117,20 +117,17 @@ test("RJ Schinner acknowledgement extracts line-level ETA candidates when item l
     now: new Date("2026-05-24T00:00:00Z")
   });
 
-  assert.equal(candidates.length, 3);
+  assert.equal(candidates.length, 1);
   assert.equal(candidates[0]?.poNumber, "PO289824");
   assert.equal(candidates[0]?.etaDate, "2026-05-26");
   assert.equal(candidates[0]?.etaDateIsEstimated, false);
   assert.equal(candidates[0]?.etaDateSource, "ship_date");
   assert.equal(candidates[0]?.carrier, "RJ_SCHINNER_TRUCK");
-  assert.equal(candidates[0]?.appliesToEntirePo, false);
-  assert.deepEqual(
-    candidates.map((c) => c.itemNumber),
-    ["30359", "02001", "30358"]
-  );
+  assert.equal(candidates[0]?.appliesToEntirePo, true);
+  assert.equal(candidates[0]?.itemNumber, null);
 });
 
-test("RJ Schinner OCR-like acknowledgement text with P0O typo still extracts ETA candidate", () => {
+test("RJ Schinner OCR-like acknowledgement text with P0O typo creates one whole-PO ETA candidate", () => {
   const text = [
     "R ¥Schinner Acknowledgement",
     "38294 P0O289824 Sam Janvey",
@@ -146,11 +143,36 @@ test("RJ Schinner OCR-like acknowledgement text with P0O typo still extracts ETA
     now: new Date("2026-05-24T00:00:00Z")
   });
 
-  assert.equal(candidates.length, 3);
+  assert.equal(candidates.length, 1);
   assert.equal(candidates[0]?.poNumber, "PO289824");
   assert.equal(candidates[0]?.etaDate, "2026-05-26");
   assert.equal(candidates[0]?.carrier, "RJ_SCHINNER_TRUCK");
-  assert.equal(candidates[0]?.appliesToEntirePo, false);
+  assert.equal(candidates[0]?.appliesToEntirePo, true);
+  assert.equal(candidates[0]?.itemNumber, null);
+});
+
+test("RJ Schinner subtotal-like OCR number does not create separate ETA candidate", () => {
+  const text = [
+    "RJ Schinner",
+    "Acknowledgement",
+    "Customer PO: PO289824",
+    "Ship Date: 05/26/26",
+    "Ship Via: OUR.TRUCK",
+    "30359 qty 300",
+    "02001 qty 20",
+    "30358 qty 100",
+    "Subtotal 2011.2"
+  ].join("\n");
+
+  const candidates = extractEtaUpdateCandidates(text, {
+    classification: "invoice_with_shipping_signal",
+    fileName: "S6509406-0001_3529484.pdf",
+    now: new Date("2026-05-24T00:00:00Z")
+  });
+
+  assert.equal(candidates.length, 1);
+  assert.equal(candidates[0]?.itemNumber, null);
+  assert.equal(candidates[0]?.appliesToEntirePo, true);
 });
 
 test("RJ Schinner item lines are parsed into extraction metadata helper", () => {
@@ -161,4 +183,79 @@ test("RJ Schinner item lines are parsed into extraction metadata helper", () => 
     { itemNumber: "02001", quantity: 20 },
     { itemNumber: "30358", quantity: 100 }
   ]);
+});
+
+test("Contec profile detection identifies order confirmation", () => {
+  const text = ["CONTEC", "Order Confirmation", "Order Number: W12095", "PO Number:", "PO289827"].join("\n");
+  const profile = detectEtaVendorProfile(text, { fileName: "PO# PO289827 Order confirmation W12095.pdf" });
+  assert.equal(profile, "contec_order_confirmation");
+});
+
+test("Contec OCR-shaped text creates one whole-PO ETA candidate with planned ship date +4 days", () => {
+  const text = [
+    "CONTEC",
+    "Order Confirmation",
+    "Order Number: W12095",
+    "PO Number:",
+    "PO289827",
+    "Ship Via: Most Economical",
+    "Item 30001 Qty 5 Planned Ship Date 29-May-2026 Wanted Delivery Date 02-Jun-2026",
+    "Item 30002 Qty 2 Planned Ship Date 29-May-2026"
+  ].join("\n");
+
+  const candidates = extractEtaUpdateCandidates(text, {
+    classification: "invoice_with_shipping_signal",
+    fileName: "PO# PO289827 Order confirmation W12095.pdf",
+    now: new Date("2026-05-24T00:00:00Z")
+  });
+
+  assert.equal(candidates.length, 1);
+  assert.equal(candidates[0]?.poNumber, "PO289827");
+  assert.equal(candidates[0]?.baseDate, "2026-05-29");
+  assert.equal(candidates[0]?.baseDateSource, "planned_ship_date");
+  assert.equal(candidates[0]?.etaDate, "2026-06-02");
+  assert.equal(candidates[0]?.etaDateSource, "estimated_from_contec_ship_date_plus_4_days");
+  assert.equal(candidates[0]?.etaDateIsEstimated, true);
+  assert.equal(candidates[0]?.appliesToEntirePo, true);
+  assert.equal(candidates[0]?.itemNumber, null);
+  assert.ok((candidates[0]?.rawContext ?? "").toLowerCase().includes("contec order confirmation"));
+});
+
+test("Contec filename fallback extracts PO289827 from filename when OCR PO label is missing", () => {
+  const text = [
+    "CONTEC",
+    "Order Confirmation",
+    "Order Number: W12095",
+    "Planned Ship Date 29-May-2026"
+  ].join("\n");
+
+  const candidates = extractEtaUpdateCandidates(text, {
+    classification: "invoice_with_shipping_signal",
+    fileName: "PO# PO289827 Order confirmation W12095.pdf",
+    now: new Date("2026-05-24T00:00:00Z")
+  });
+
+  assert.equal(candidates.length, 1);
+  assert.equal(candidates[0]?.poNumber, "PO289827");
+});
+
+test("Contec profile does not create line-level candidates even when item lines exist", () => {
+  const text = [
+    "CONTEC",
+    "Order Confirmation",
+    "PO Number: PO289827",
+    "Order Number: W12095",
+    "30001 Qty 5 Planned Ship Date 29-May-2026",
+    "30002 Qty 3 Planned Ship Date 29-May-2026"
+  ].join("\n");
+
+  const candidates = extractEtaUpdateCandidates(text, {
+    classification: "invoice_with_shipping_signal",
+    fileName: "PO# PO289827 Order confirmation W12095.pdf",
+    now: new Date("2026-05-24T00:00:00Z")
+  });
+
+  assert.equal(candidates.length, 1);
+  assert.equal(candidates[0]?.itemNumber, null);
+  assert.equal(candidates[0]?.appliesToEntirePo, true);
 });

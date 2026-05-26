@@ -40,6 +40,7 @@ function pendingReview(overrides?: Record<string, unknown>) {
 }
 
 test("approveEtaCandidate creates eta_update action request and stores action_request_id", async () => {
+  let requestPayload: Record<string, unknown> | null = null;
   const result = await approveEtaCandidateWithDeps(
     {
       candidateId: "cand-1",
@@ -50,7 +51,10 @@ test("approveEtaCandidate creates eta_update action request and stores action_re
       findDocumentExtractionById: async () => ({ id: "extract-1", documentId: "doc-1" }) as any,
       createPendingReview: async () => pendingReview() as any,
       findReviewByCandidateId: async () => null,
-      createAgentActionRequest: async () => "req-123",
+      createAgentActionRequest: async (input: Record<string, unknown>) => {
+        requestPayload = (input.inputJson ?? null) as Record<string, unknown> | null;
+        return "req-123";
+      },
       approveReview: async (input) => pendingReview({ reviewStatus: "approved", actionRequestId: input.actionRequestId }) as any,
       rejectReview: async () => pendingReview({ reviewStatus: "rejected" }) as any
     }
@@ -59,6 +63,39 @@ test("approveEtaCandidate creates eta_update action request and stores action_re
   assert.equal(result.actionRequestId, "req-123");
   assert.equal(result.review.reviewStatus, "approved");
   assert.equal(result.review.actionRequestId, "req-123");
+  assert.equal((requestPayload as any)?.["appliesToEntirePo"], true);
+  assert.equal((requestPayload as any)?.["itemNumber"], "123456");
+});
+
+test("approveEtaCandidate whole-PO candidate sets all-open-lines payload semantics", async () => {
+  let requestPayload: Record<string, unknown> | null = null;
+  await approveEtaCandidateWithDeps(
+    {
+      candidateId: "cand-1",
+      reviewedBy: "reviewer-1"
+    },
+    {
+      findEtaUpdateCandidateById: async () => candidate({ itemNumber: null, appliesToEntirePo: true }) as any,
+      findDocumentExtractionById: async () => ({ id: "extract-1", documentId: "doc-1" }) as any,
+      createPendingReview: async () => pendingReview() as any,
+      findReviewByCandidateId: async () => null,
+      createAgentActionRequest: async (input: Record<string, unknown>) => {
+        requestPayload = (input.inputJson ?? null) as Record<string, unknown> | null;
+        return "req-123";
+      },
+      approveReview: async (input) => pendingReview({ reviewStatus: "approved", actionRequestId: input.actionRequestId }) as any,
+      rejectReview: async () => pendingReview({ reviewStatus: "rejected" }) as any
+    }
+  );
+
+  assert.equal((requestPayload as any)?.["appliesToEntirePo"], true);
+  assert.equal((requestPayload as any)?.["applies_to_entire_po"], true);
+  assert.equal((requestPayload as any)?.["itemNumber"], null);
+  assert.equal((requestPayload as any)?.["item_number"], null);
+  assert.equal((requestPayload as any)?.["updateScope"], "po_all_lines");
+  assert.equal((requestPayload as any)?.["update_scope"], "po_all_lines");
+  assert.equal((requestPayload as any)?.["appliesTo"], "all_open_po_lines");
+  assert.equal((requestPayload as any)?.["applies_to"], "all_open_po_lines");
 });
 
 test("approveEtaCandidate rejects missing po_number", async () => {

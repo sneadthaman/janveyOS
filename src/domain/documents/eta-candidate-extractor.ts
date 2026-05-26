@@ -11,6 +11,7 @@ export interface EtaUpdateCandidate {
   appliesToEntirePo: boolean;
   confidence: number;
   rawContext: string;
+  rawExtractionJson?: Record<string, unknown> | null;
 }
 
 interface ExtractorOptions {
@@ -20,7 +21,7 @@ interface ExtractorOptions {
   sourceSender?: string | null;
 }
 
-export type EtaVendorProfile = "sss_invoice" | "rj_schinner_acknowledgement" | "unknown";
+export type EtaVendorProfile = "sss_invoice" | "rj_schinner_acknowledgement" | "contec_order_confirmation" | "unknown";
 
 const PO_REGEX = [
   /\bPO\s*#?\s*(\d{4,})\b/i,
@@ -50,6 +51,42 @@ const SSS_SHIPPED_OR_FULFILLED_REGEX = [/\bshipped\s*[:#]?\s*\d+\b/i, /\bfulfill
 const ENTIRE_PO_REGEX = [/entire\s+po/i, /all\s+items/i, /complete\s+order/i, /full\s+po/i, /bring\s+po\s*\d{4,}\s+on/i];
 
 function toIsoDate(raw: string, now: Date): string | null {
+  const dayMonthName = raw.match(
+    /\b(\d{1,2})[\s-](Jan|January|Feb|February|Mar|March|Apr|April|May|Jun|June|Jul|July|Aug|August|Sep|Sept|September|Oct|October|Nov|November|Dec|December)[\s-](\d{4})\b/i
+  );
+  if (dayMonthName) {
+    const monthMap: Record<string, number> = {
+      jan: 1,
+      january: 1,
+      feb: 2,
+      february: 2,
+      mar: 3,
+      march: 3,
+      apr: 4,
+      april: 4,
+      may: 5,
+      jun: 6,
+      june: 6,
+      jul: 7,
+      july: 7,
+      aug: 8,
+      august: 8,
+      sep: 9,
+      sept: 9,
+      september: 9,
+      oct: 10,
+      october: 10,
+      nov: 11,
+      november: 11,
+      dec: 12,
+      december: 12
+    };
+    const day = Number(dayMonthName[1]);
+    const month = monthMap[dayMonthName[2].toLowerCase()];
+    const year = Number(dayMonthName[3]);
+    return `${year.toString().padStart(4, "0")}-${month.toString().padStart(2, "0")}-${day.toString().padStart(2, "0")}`;
+  }
+
   const monthName = raw.match(/\b(Jan|January|Feb|February|Mar|March|Apr|April|May|Jun|June|Jul|July|Aug|August|Sep|Sept|September|Oct|October|Nov|November|Dec|December)\s+(\d{1,2})(?:,\s*(\d{4}))?/i);
   if (monthName) {
     const monthMap: Record<string, number> = {
@@ -166,6 +203,12 @@ export function detectEtaVendorProfile(text: string, options?: { fileName?: stri
     sender.includes("rjschinner");
   if (isRjSchinner) return "rj_schinner_acknowledgement";
 
+  const isContec =
+    (lower.includes("contec") && lower.includes("order confirmation")) ||
+    (fileName.includes("order confirmation") && fileName.includes("po#")) ||
+    sender.includes("contecinc.com");
+  if (isContec) return "contec_order_confirmation";
+
   return "unknown";
 }
 
@@ -179,6 +222,24 @@ export function extractRjSchinnerItemLines(text: string): Array<{ itemNumber: st
     const itemNumber = m[1].trim();
     const quantity = m[2] ? Number(m[2]) : null;
     if (!itemNumber) continue;
+    if (!out.some((row) => row.itemNumber === itemNumber)) {
+      out.push({ itemNumber, quantity: Number.isFinite(quantity as number) ? quantity : null });
+    }
+  }
+  return out;
+}
+
+export function extractContecItemLines(text: string): Array<{ itemNumber: string; quantity: number | null }> {
+  const lines = text.split(/\r?\n/);
+  const out: Array<{ itemNumber: string; quantity: number | null }> = [];
+  for (const line of lines) {
+    if (!/(planned ship date|wanted delivery date|qty|quantity)/i.test(line)) continue;
+    const itemMatch = line.match(/\b([A-Z0-9-]{4,})\b/);
+    if (!itemMatch?.[1]) continue;
+    const quantityMatch = line.match(/\bqty(?:uantity)?\s*:?\s*(\d+)\b/i);
+    const itemNumber = itemMatch[1].trim().toUpperCase();
+    if (itemNumber === "DATE" || itemNumber === "SHIP") continue;
+    const quantity = quantityMatch?.[1] ? Number(quantityMatch[1]) : null;
     if (!out.some((row) => row.itemNumber === itemNumber)) {
       out.push({ itemNumber, quantity: Number.isFinite(quantity as number) ? quantity : null });
     }
@@ -205,6 +266,8 @@ export function extractEtaUpdateCandidates(text: string, options?: ExtractorOpti
   const candidates: EtaUpdateCandidate[] = [];
 
   const po = normalizePoNumber(findFirst(normalizedRaw, PO_REGEX));
+  const fileNamePo = normalizePoNumber(findFirst(String(options?.fileName ?? ""), [/\bPO\s*#?\s*(\d{4,})\b/i]));
+  const resolvedPo = po ?? fileNamePo;
   const explicitEtaDateRaw = findFirst(normalizedRaw, [
     /\b(?:eta|estimated delivery|expected delivery|delivery date)\s*:?\s*(\d{1,2}[\/-]\d{1,2}(?:[\/-]\d{2,4})?)/i,
     /\b(?:eta|estimated delivery|expected delivery|delivery date)\s*:?\s*((?:Jan|January|Feb|February|Mar|March|Apr|April|May|Jun|June|Jul|July|Aug|August|Sep|Sept|September|Oct|October|Nov|November|Dec|December)\s+\d{1,2}(?:,\s*\d{4})?)/i
@@ -243,6 +306,7 @@ export function extractEtaUpdateCandidates(text: string, options?: ExtractorOpti
   ]);
   const hasShippedOrFulfilledQty = SSS_SHIPPED_OR_FULFILLED_REGEX.some((rx) => rx.test(normalizedRaw));
   const itemLines = extractRjSchinnerItemLines(normalizedRaw);
+  const contecItemLines = extractContecItemLines(normalizedRaw);
   const lineLevelItem = item ? item : itemLines[0]?.itemNumber ?? null;
   let resolvedAppliesToEntirePo = appliesToEntirePo;
 
@@ -279,7 +343,7 @@ export function extractEtaUpdateCandidates(text: string, options?: ExtractorOpti
     }
   }
 
-  if (!etaDate && vendorProfile === "sss_invoice" && po && hasShippedOrFulfilledQty) {
+  if (!etaDate && vendorProfile === "sss_invoice" && resolvedPo && hasShippedOrFulfilledQty) {
     const baseDateCandidate = documentDateRaw ? toIsoDate(documentDateRaw, now) : invoiceDateRaw ? toIsoDate(invoiceDateRaw, now) : null;
     if (baseDateCandidate) {
       baseDate = baseDateCandidate;
@@ -290,9 +354,30 @@ export function extractEtaUpdateCandidates(text: string, options?: ExtractorOpti
     }
   }
 
+  if (vendorProfile === "contec_order_confirmation") {
+    const plannedShipDateRaw = findFirst(normalizedRaw, [
+      /\bplanned\s+ship\s+date\s*:?\s*(\d{1,2}[\s-](?:Jan|January|Feb|February|Mar|March|Apr|April|May|Jun|June|Jul|July|Aug|August|Sep|Sept|September|Oct|October|Nov|November|Dec|December)[\s-]\d{4})/i,
+      /\bplanned\s+ship\s+date[^\n]*\b(\d{1,2}[\s-](?:Jan|January|Feb|February|Mar|March|Apr|April|May|Jun|June|Jul|July|Aug|August|Sep|Sept|September|Oct|October|Nov|November|Dec|December)[\s-]\d{4})/i
+    ]);
+    const wantedDeliveryDateRaw = findFirst(normalizedRaw, [
+      /\bwanted\s+delivery\s+date\s*:?\s*(\d{1,2}[\s-](?:Jan|January|Feb|February|Mar|March|Apr|April|May|Jun|June|Jul|July|Aug|August|Sep|Sept|September|Oct|October|Nov|November|Dec|December)[\s-]\d{4})/i,
+      /\bwanted\s+delivery\s+date[^\n]*\b(\d{1,2}[\s-](?:Jan|January|Feb|February|Mar|March|Apr|April|May|Jun|June|Jul|July|Aug|August|Sep|Sept|September|Oct|October|Nov|November|Dec|December)[\s-]\d{4})/i
+    ]);
+    const shipBaseRaw = plannedShipDateRaw ?? wantedDeliveryDateRaw;
+    const shipBaseDate = shipBaseRaw ? toIsoDate(shipBaseRaw, now) : null;
+    if (shipBaseDate) {
+      baseDate = shipBaseDate;
+      baseDateSource = plannedShipDateRaw ? "planned_ship_date" : "wanted_delivery_date";
+      etaDate = addDays(shipBaseDate, 4);
+      etaDateSource = "estimated_from_contec_ship_date_plus_4_days";
+      etaDateIsEstimated = true;
+      resolvedAppliesToEntirePo = true;
+    }
+  }
+
   const confidence = (() => {
     let score = 0.5;
-    if (po) score += 0.2;
+    if (resolvedPo) score += 0.2;
     if (etaDate) score += 0.2;
     if (tracking) score += 0.05;
     if (lineLevelItem) score += 0.05;
@@ -302,26 +387,47 @@ export function extractEtaUpdateCandidates(text: string, options?: ExtractorOpti
     return Math.min(score, 0.99);
   })();
 
-  if (vendorProfile === "rj_schinner_acknowledgement" && po && etaDate && itemLines.length > 0) {
-    for (const line of itemLines) {
-      candidates.push({
-        poNumber: po,
-        etaDate,
-        etaDateSource,
-        etaDateIsEstimated,
-        baseDate,
-        baseDateSource,
-        trackingNumber: tracking,
-        carrier,
-        itemNumber: line.itemNumber,
-        appliesToEntirePo: false,
-        confidence,
-        rawContext: `RJ Schinner acknowledgement ship date ${etaDate} for item ${line.itemNumber}`
-      });
-    }
-  } else if (po || etaDate || tracking || lineLevelItem) {
+  if (vendorProfile === "rj_schinner_acknowledgement" && resolvedPo && etaDate) {
     candidates.push({
-      poNumber: po,
+      poNumber: resolvedPo,
+      etaDate,
+      etaDateSource: "ship_date",
+      etaDateIsEstimated: false,
+      baseDate,
+      baseDateSource,
+      trackingNumber: tracking,
+      carrier,
+      itemNumber: null,
+      appliesToEntirePo: true,
+      confidence: Math.max(confidence, 0.9),
+      rawContext: `RJ Schinner acknowledgement ship date ${etaDate}`,
+      rawExtractionJson: {
+        eta_vendor_profile: vendorProfile,
+        extracted_item_lines: itemLines
+      }
+    });
+  } else if (vendorProfile === "contec_order_confirmation" && resolvedPo && etaDate) {
+    candidates.push({
+      poNumber: resolvedPo,
+      etaDate,
+      etaDateSource: "estimated_from_contec_ship_date_plus_4_days",
+      etaDateIsEstimated: true,
+      baseDate,
+      baseDateSource: baseDateSource ?? "planned_ship_date",
+      trackingNumber: tracking,
+      carrier: carrier === "MOST ECONOMICAL" ? "MOST_ECONOMICAL" : null,
+      itemNumber: null,
+      appliesToEntirePo: true,
+      confidence: resolvedPo && baseDate ? 0.7 : 0.55,
+      rawContext: `Contec Order Confirmation ${findFirst(normalizedRaw, [/\bOrder\s+Number\s*:?\s*([A-Z0-9-]{3,})/i]) ?? ""} planned ship date ${baseDate ?? "-"}`.trim(),
+      rawExtractionJson: {
+        eta_vendor_profile: vendorProfile,
+        extracted_item_lines: contecItemLines
+      }
+    });
+  } else if (resolvedPo || etaDate || tracking || lineLevelItem) {
+    candidates.push({
+      poNumber: resolvedPo,
       etaDate,
       etaDateSource,
       etaDateIsEstimated,
