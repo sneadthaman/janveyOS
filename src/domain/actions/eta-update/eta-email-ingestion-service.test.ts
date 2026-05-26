@@ -19,7 +19,7 @@ function baseDeps(overrides: Record<string, unknown> = {}) {
       candidates: [{ id: "cand-1" }]
     }),
     createPendingReviewForCandidateWithStatus: async () => ({ review: { id: "review-1", reviewStatus: "pending" }, created: true }),
-    postPendingEtaReviewToSlack: async () => true,
+    postPendingEtaReviewToSlack: async (reviewId: string) => ({ reviewId, postedChannels: ["C1"], failedChannels: [] }),
     ...overrides
   };
 }
@@ -149,9 +149,9 @@ test("when slack-post flag enabled and new review created, notifier called", asy
         listMessageAttachments: async () => [{ id: "a1", name: "file.pdf", contentType: "application/pdf", size: 100 }],
         downloadFileAttachment: async () => Buffer.from("pdf"),
         createPendingReviewForCandidateWithStatus: async () => ({ review: { id: "review-new", reviewStatus: "pending" }, created: true }),
-        postPendingEtaReviewToSlack: async () => {
+        postPendingEtaReviewToSlack: async (reviewId: string) => {
           postCalls += 1;
-          return true;
+          return { reviewId, postedChannels: ["C1"], failedChannels: [] };
         }
       }) as any
     );
@@ -173,9 +173,9 @@ test("when slack-post flag disabled, notifier not called", async () => {
       baseDeps({
         listMessageAttachments: async () => [{ id: "a1", name: "file.pdf", contentType: "application/pdf", size: 100 }],
         downloadFileAttachment: async () => Buffer.from("pdf"),
-        postPendingEtaReviewToSlack: async () => {
+        postPendingEtaReviewToSlack: async (reviewId: string) => {
           postCalls += 1;
-          return true;
+          return { reviewId, postedChannels: ["C1"], failedChannels: [] };
         }
       }) as any
     );
@@ -198,9 +198,9 @@ test("existing review does not repost when flag enabled", async () => {
         listMessageAttachments: async () => [{ id: "a1", name: "file.pdf", contentType: "application/pdf", size: 100 }],
         downloadFileAttachment: async () => Buffer.from("pdf"),
         createPendingReviewForCandidateWithStatus: async () => ({ review: { id: "review-existing", reviewStatus: "pending" }, created: false }),
-        postPendingEtaReviewToSlack: async () => {
+        postPendingEtaReviewToSlack: async (reviewId: string) => {
           postCalls += 1;
-          return true;
+          return { reviewId, postedChannels: ["C1"], failedChannels: [] };
         }
       }) as any
     );

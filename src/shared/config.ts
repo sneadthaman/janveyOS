@@ -30,6 +30,7 @@ const schema = z.object({
   SLACK_SIGNING_SECRET: optionalEnvString,
   SLACK_APP_TOKEN: optionalEnvString,
   DOCUMENT_REVIEW_SLACK_CHANNEL_ID: optionalEnvString,
+  DOCUMENT_REVIEW_SLACK_CHANNEL_IDS: optionalEnvString,
   QUOTE_TO_SO_APPROVER_SLACK_USER_IDS: optionalEnvString,
   JANVEY_OS_API_BASE_URL: optionalEnvString,
   AGENT_SHARED_SECRET: optionalEnvString,

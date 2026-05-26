@@ -137,3 +137,26 @@ test("reject action handler calls reject service and updates card", async () => 
   assert.equal(rejectCalls, 1);
   assert.equal(updateCalls, 1);
 });
+
+test("duplicate approval from another card returns already-approved/executed state", async () => {
+  const result = await handleDocumentReviewActionWithDeps(
+    {
+      actionId: "document_review_eta_approve",
+      value: JSON.stringify({ reviewId: "review-1" }),
+      actorSlackUserId: "U123",
+      slackChannelId: "C2",
+      slackMessageTs: "222.333"
+    },
+    {
+      approveEtaReviewById: async () => ({ review: { id: "review-1" }, actionRequestId: "req-1" }) as any,
+      rejectEtaReviewById: async () => ({}) as any,
+      loadReviewWithCandidate: async () => makeJoined("approved"),
+      updateSlackMessage: async () => undefined,
+      handleEtaUpdateApprovalAction: async () =>
+        ({ kind: "ok", message: "ETA update request req-1 is already approved and queued." }) as any
+    } as any
+  );
+
+  assert.equal(result.kind, "ok");
+  assert.match(result.message, /already approved and queued/i);
+});

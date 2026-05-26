@@ -108,6 +108,9 @@ export async function handleDocumentReviewActionWithDeps(
         })
       });
       if (execution.kind === "unauthorized") return { kind: "error", message: execution.message };
+      if (execution.kind === "ok" && /\balready\b/i.test(execution.message)) {
+        return { kind: "ok", message: execution.message };
+      }
       return { kind: "ok", message: `Approved. Action request: ${result.actionRequestId}` };
     }
 

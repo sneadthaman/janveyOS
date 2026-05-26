@@ -101,12 +101,14 @@ async function createReviewsForDocument(
     }
 
     try {
-      const posted = await deps.postPendingEtaReviewToSlack(createdReview.review.id);
-      if (posted) {
+      const postResult = await deps.postPendingEtaReviewToSlack(createdReview.review.id);
+      if (postResult.postedChannels.length > 0) {
         logger.info("eta_email.review_posted_to_slack", {
           messageId: input.messageId,
           reviewId: createdReview.review.id,
-          candidateId: candidate.id
+          candidateId: candidate.id,
+          postedChannels: postResult.postedChannels,
+          failedChannels: postResult.failedChannels
         });
       }
     } catch (error) {
